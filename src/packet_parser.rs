@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use etherparse::{PacketHeaders, TransportHeader};
 use std::net::Ipv4Addr;
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct ParsedPacket {
     pub src_mac: String,
@@ -27,7 +28,6 @@ pub fn parse(raw: &[u8]) -> Result<ParsedPacket> {
         Some(etherparse::LinkHeader::Ethernet2(eth)) => eth,
         _ => anyhow::bail!("Not an Ethernet packet"),
     };
-
     let (src_ip, dst_ip) = match headers.net {
         Some(etherparse::NetHeaders::Ipv4(ipv4, _)) => (
             Ipv4Addr::from(ipv4.source).to_string(),
