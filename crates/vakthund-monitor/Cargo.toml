@@ -1,11 +1,9 @@
 [package]
-name = "vakthund-capture"
+name = "vakthund-monitor"
 version = "0.1.0"
 edition = "2021"
-description = "Packet capture module for Vakthund"
+description = "Traffic monitor for Vakthund IDPS that applies quarantines and thresholds"
 license = "MIT"
 
 [dependencies]
 vakthund-common = { path = "../vakthund-common" }
-pcap = "0.10"
-ctrlc = "3"

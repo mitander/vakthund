@@ -1,0 +1,14 @@
+capture:
+  mode: "simulation"         # Allowed values: "live" or "simulation"
+  interface: "en0"
+  buffer_size: 1048576
+  promiscuous: true
+
+monitor:
+  quarantine_timeout: 600
+  thresholds:
+    packet_rate: 1000.0
+    data_volume: 10485760.0
+    port_entropy: 2.5
+  whitelist:
+    - "192.168.1.1"

@@ -1,8 +1,7 @@
 //! # Vakthund IDPS Application
 //!
-//! This binary is the entry point for the Vakthund Intrusion Detection and Prevention System (IDPS).
-//! It initializes logging and then runs the pipeline defined in vakthund-core.
-
+//! Entry point for the Vakthund Intrusion Detection and Prevention System.
+//! It initializes logging and runs the core pipeline.
 use vakthund_common::logger::log_info;
 use vakthund_core::run_vakthund;
 

@@ -10,4 +10,4 @@ vakthund-common = { path = "../vakthund-common" }
 vakthund-capture = { path = "../vakthund-capture" }
 vakthund-protocol = { path = "../vakthund-protocol" }
 vakthund-detection = { path = "../vakthund-detection" }
-
+vakthund-monitor = { path = "../vakthund-monitor" }
