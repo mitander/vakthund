@@ -1,7 +1,7 @@
-//! # Vakthund Core
+//! # Vakthund Core Library
 //!
-//! Integrates all Vakthund modules into a complete IDS pipeline.
+//! This crate contains the core logic for the Vakthund IDPS, including the business pipeline
+//! and a deterministic simulation engine for testing and replay purposes.
 
 pub mod pipeline;
-
-pub use pipeline::run_vakthund;
+pub mod simulation_engine;

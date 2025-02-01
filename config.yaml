@@ -3,6 +3,7 @@ capture:
   interface: "en0"
   buffer_size: 1048576
   promiscuous: true
+  seed: 42
 
 monitor:
   quarantine_timeout: 600

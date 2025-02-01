@@ -1,25 +1,14 @@
 //! # CoAP Parser
 //!
-//! Contains functions to parse CoAP packet formats.
-
-use crate::parser::{CoapMethod, ParsedPacket};
+//! Provides a specialized function to parse COAP packets.
+use crate::parser::{parse_packet, ParsedPacket};
 use vakthund_common::packet::Packet;
 
-/// Attempts to parse a CoAP packet.
-/// Expected format: "COAP <METHOD> <RESOURCE> ..."
 pub fn parse_coap(packet: &Packet) -> Option<ParsedPacket> {
     let s = packet.as_str()?;
-    let mut parts = s.splitn(3, ' ');
-    let protocol = parts.next()?;
-    if protocol != "COAP" {
-        return None;
-    }
-    let method_str = parts.next()?;
-    let resource = parts.next()?;
-    let method = if method_str == "GET" {
-        CoapMethod::GET
+    if s.to_lowercase().contains("coap") {
+        parse_packet(packet).ok()
     } else {
-        CoapMethod::Other(method_str)
-    };
-    Some(ParsedPacket::Coap { method, resource })
+        None
+    }
 }

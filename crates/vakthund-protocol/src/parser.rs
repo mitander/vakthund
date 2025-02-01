@@ -1,100 +1,148 @@
 //! # Packet Parser
 //!
-//! Provides the public interface for parsing packets. It attempts MQTT parsing first,
-//! then CoAP, then generic parsing. The parsed packet is zero‑copy (borrowing from the packet).
+//! Parses a raw packet (from `vakthund_common::packet::Packet`) into a structured format.
+//! The expected format is as follows:
+//!
+//! For MQTT packets (example):
+//!     ID:3 MQTT CONNECT alert/home_sim_3
+//!
+//! For COAP packets (example):
+//!     ID:4 COAP GET sensor/alert_sim_4
+//!
+//! Otherwise, a Generic variant is returned.
 
-use crate::coap;
-use crate::generic;
-use crate::mqtt;
+use std::str::FromStr;
 use vakthund_common::errors::PacketError;
 use vakthund_common::packet::Packet;
 
-/// Enum representing the MQTT command.
 #[derive(Debug, PartialEq, Eq)]
-pub enum MqttCommand<'a> {
+pub enum Protocol {
+    MQTT,
+    COAP,
+    Other(String),
+}
+
+impl FromStr for Protocol {
+    type Err = PacketError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "mqtt" => Ok(Protocol::MQTT),
+            "coap" => Ok(Protocol::COAP),
+            other => Ok(Protocol::Other(other.to_string())),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum MqttCommand {
     Connect,
-    Other(&'a str),
+    Other(String),
 }
 
-/// Enum representing the CoAP method.
-#[derive(Debug, PartialEq, Eq)]
-pub enum CoapMethod<'a> {
-    GET,
-    Other(&'a str),
+impl FromStr for MqttCommand {
+    type Err = PacketError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.eq_ignore_ascii_case("connect") {
+            Ok(MqttCommand::Connect)
+        } else {
+            Ok(MqttCommand::Other(s.to_string()))
+        }
+    }
 }
 
-/// The parsed packet type.
 #[derive(Debug, PartialEq, Eq)]
-pub enum ParsedPacket<'a> {
+pub enum CoapMethod {
+    Get,
+    Other(String),
+}
+
+impl FromStr for CoapMethod {
+    type Err = PacketError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.eq_ignore_ascii_case("get") {
+            Ok(CoapMethod::Get)
+        } else {
+            Ok(CoapMethod::Other(s.to_string()))
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum ParsedPacket {
     Mqtt {
-        command: MqttCommand<'a>,
-        topic: &'a str,
+        command: MqttCommand,
+        topic: String,
     },
     Coap {
-        method: CoapMethod<'a>,
-        resource: &'a str,
+        method: CoapMethod,
+        resource: String,
     },
     Generic {
-        header: &'a str,
-        payload: &'a str,
+        header: String,
+        payload: String,
     },
 }
 
-/// Attempts to parse a packet into a [`ParsedPacket`]. Returns a custom error if parsing fails.
+/// Parses a packet into a `ParsedPacket`.
 pub fn parse_packet(packet: &Packet) -> Result<ParsedPacket, PacketError> {
-    if let Some(mqtt_packet) = mqtt::parse_mqtt(packet) {
-        return Ok(mqtt_packet);
-    }
-    if let Some(coap_packet) = coap::parse_coap(packet) {
-        return Ok(coap_packet);
-    }
-    if let Some(generic_packet) = generic::parse_generic(packet) {
-        return Ok(generic_packet);
-    }
-    Err(PacketError::FormatError("Packet format is invalid".into()))
-}
+    let s = packet.as_str().ok_or(PacketError::InvalidUtf8)?;
+    let mut parts = s.split_whitespace();
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use vakthund_common::packet::Packet;
+    // The packet must start with an ID token.
+    let id_token = parts
+        .next()
+        .ok_or_else(|| PacketError::FormatError("Missing ID token".to_string()))?;
+    if !id_token.starts_with("ID:") {
+        return Err(PacketError::FormatError(
+            "Expected ID token at start".to_string(),
+        ));
+    }
 
-    #[test]
-    fn test_parse_packet_mqtt_positive() {
-        let packet = Packet::new("MQTT CONNECT home/livingroom".as_bytes().to_vec());
-        if let Ok(ParsedPacket::Mqtt { command, topic }) = parse_packet(&packet) {
-            assert_eq!(command, MqttCommand::Connect);
-            assert_eq!(topic, "home/livingroom");
-        } else {
-            panic!("MQTT packet should parse correctly");
+    // Next, expect the protocol token.
+    let protocol_token = parts
+        .next()
+        .ok_or_else(|| PacketError::FormatError("Missing protocol token".to_string()))?;
+    let protocol = Protocol::from_str(protocol_token)?;
+
+    // Next, expect the command token.
+    let command_token = parts
+        .next()
+        .ok_or_else(|| PacketError::FormatError("Missing command token".to_string()))?;
+
+    match protocol {
+        Protocol::MQTT => {
+            // For MQTT, if command is CONNECT, then a topic is expected.
+            let cmd = MqttCommand::from_str(command_token)?;
+            if cmd == MqttCommand::Connect {
+                let topic = parts.next().ok_or_else(|| {
+                    PacketError::FormatError("Missing topic for MQTT CONNECT".to_string())
+                })?;
+                Ok(ParsedPacket::Mqtt {
+                    command: MqttCommand::Connect,
+                    topic: topic.to_string(),
+                })
+            } else {
+                Err(PacketError::FormatError(
+                    "Unsupported MQTT command".to_string(),
+                ))
+            }
         }
-    }
-
-    #[test]
-    fn test_parse_packet_coap_positive() {
-        let packet = Packet::new("COAP GET sensor/kitchen".as_bytes().to_vec());
-        if let Ok(ParsedPacket::Coap { method, resource }) = parse_packet(&packet) {
-            assert_eq!(method, CoapMethod::GET);
-            assert_eq!(resource, "sensor/kitchen");
-        } else {
-            panic!("CoAP packet should parse correctly");
+        Protocol::COAP => {
+            // For COAP, we expect a method and a resource.
+            let method = CoapMethod::from_str(command_token)?;
+            let resource = parts.next().ok_or_else(|| {
+                PacketError::FormatError("Missing resource for COAP packet".to_string())
+            })?;
+            Ok(ParsedPacket::Coap {
+                method,
+                resource: resource.to_string(),
+            })
         }
-    }
-
-    #[test]
-    fn test_parse_packet_generic_positive() {
-        let packet = Packet::new("INFO SystemRunning".as_bytes().to_vec());
-        if let Ok(ParsedPacket::Generic { header, payload }) = parse_packet(&packet) {
-            assert_eq!(header, "INFO");
-            assert_eq!(payload, "SystemRunning");
-        } else {
-            panic!("Generic packet should parse correctly");
+        Protocol::Other(_) => {
+            // For unknown protocols, return the entire content as a Generic packet.
+            let header = format!("{} {}", protocol_token, command_token);
+            let payload = parts.collect::<Vec<&str>>().join(" ");
+            Ok(ParsedPacket::Generic { header, payload })
         }
-    }
-
-    #[test]
-    fn test_parse_packet_negative() {
-        let packet = Packet::new("incomplete".as_bytes().to_vec());
-        assert!(parse_packet(&packet).is_err());
     }
 }

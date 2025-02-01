@@ -23,7 +23,7 @@ pub fn analyze_packet(packet: &ParsedPacket) -> DetectionResult {
         }
         ParsedPacket::Coap { method, resource } => {
             // For CoAP, a GET request with a resource containing "alert" is considered a threat.
-            if *method == CoapMethod::GET && resource.contains("alert") {
+            if *method == CoapMethod::Get && resource.contains("alert") {
                 DetectionResult::ThreatDetected("COAP GET alert".into())
             } else {
                 DetectionResult::NoThreat

@@ -23,3 +23,7 @@ Cargo.lock
 # Added by cargo
 
 /target
+
+# Simulation logs and bug reports
+/simulation_logs/
+/bug_reports/

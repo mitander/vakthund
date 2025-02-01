@@ -8,7 +8,6 @@ pub mod pcap_capture;
 pub mod simulation_capture;
 
 use crate::pcap_capture::capture_packets_loop;
-use crate::simulation_capture::simulate_capture_loop;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use vakthund_common::config::CaptureMode;
@@ -21,6 +20,8 @@ pub fn start_capture<F>(
     interface: &str,
     buffer_size: usize,
     promiscuous: bool,
+    seed: Option<u64>,
+    replay_target: Option<String>,
     mut callback: F,
 ) where
     F: FnMut(Packet),
@@ -36,7 +37,12 @@ pub fn start_capture<F>(
     }
 
     match mode {
-        CaptureMode::Simulation => simulate_capture_loop(&terminate_flag, &mut callback),
+        CaptureMode::Simulation => simulation_capture::simulate_capture_loop(
+            &terminate_flag,
+            seed,
+            replay_target,
+            &mut callback,
+        ),
         CaptureMode::Live => capture_packets_loop(
             &terminate_flag,
             interface,

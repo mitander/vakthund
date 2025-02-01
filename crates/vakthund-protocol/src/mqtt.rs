@@ -1,25 +1,14 @@
 //! # MQTT Parser
 //!
-//! Contains functions to parse MQTT packet formats.
-
-use crate::parser::{MqttCommand, ParsedPacket};
+//! Provides a specialized function to parse MQTT packets.
+use crate::parser::{parse_packet, ParsedPacket};
 use vakthund_common::packet::Packet;
 
-/// Attempts to parse an MQTT packet.
-/// Expected format: "MQTT <COMMAND> <TOPIC> ..."
 pub fn parse_mqtt(packet: &Packet) -> Option<ParsedPacket> {
     let s = packet.as_str()?;
-    let mut parts = s.splitn(3, ' ');
-    let protocol = parts.next()?;
-    if protocol != "MQTT" {
-        return None;
-    }
-    let command_str = parts.next()?;
-    let topic = parts.next()?;
-    let command = if command_str == "CONNECT" {
-        MqttCommand::Connect
+    if s.to_lowercase().contains("mqtt") {
+        parse_packet(packet).ok()
     } else {
-        MqttCommand::Other(command_str)
-    };
-    Some(ParsedPacket::Mqtt { command, topic })
+        None
+    }
 }

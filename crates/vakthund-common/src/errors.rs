@@ -2,19 +2,12 @@
 //!
 //! Defines custom error types for Vakthund modules.
 
-#[derive(Debug)]
+use thiserror::Error;
+
+#[derive(Error, Debug)]
 pub enum PacketError {
+    #[error("Invalid UTF-8 sequence in packet data")]
     InvalidUtf8,
+    #[error("Packet format error: {0}")]
     FormatError(String),
 }
-
-impl std::fmt::Display for PacketError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PacketError::InvalidUtf8 => write!(f, "Invalid UTF-8 sequence in packet data"),
-            PacketError::FormatError(msg) => write!(f, "Packet format error: {}", msg),
-        }
-    }
-}
-
-impl std::error::Error for PacketError {}
