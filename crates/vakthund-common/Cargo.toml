@@ -1,0 +1,6 @@
+[package]
+name = "vakthund-common"
+version = "0.1.0"
+edition = "2021"
+description = "Common types, errors, and utilities for Vakthund modules"
+license = "MIT"

@@ -1,0 +1,9 @@
+[package]
+name = "vakthund-capture"
+version = "0.1.0"
+edition = "2021"
+description = "Packet capture module for Vakthund"
+license = "MIT"
+
+[dependencies]
+vakthund-common = { path = "../vakthund-common" }

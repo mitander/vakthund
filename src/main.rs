@@ -1,38 +1,13 @@
-mod config;
-mod packet_capture;
-mod packet_parser;
+//! # Vakthund IDPS Application
+//!
+//! This binary is the entry point for the Vakthund Intrusion Detection and Prevention System (IDPS).
+//! It initializes logging and then runs the pipeline defined in vakthund-core.
 
-use anyhow::Result;
-use config::Settings;
-use tracing::info;
+use vakthund_common::logger::log_info;
+use vakthund_core::run_vakthund;
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    tracing_subscriber::fmt::init();
-
-    let settings = Settings::new()?;
-    info!("Loaded config: {:?}", settings);
-
-    let (tx, mut rx) = tokio::sync::mpsc::channel(1024);
-    let capture_task = tokio::spawn(async move { packet_capture::start(settings, tx).await });
-
-    while let Some(raw_data) = rx.recv().await {
-        match packet_parser::parse(&raw_data) {
-            Ok(packet) if packet.is_mqtt() => {
-                info!(
-                    "MQTT packet: {}:{} -> {}:{} ({} bytes)",
-                    packet.src_ip,
-                    packet.src_port,
-                    packet.dst_ip,
-                    packet.dst_port,
-                    packet.payload.len()
-                );
-            }
-            Err(e) => tracing::error!("Parse error: {}", e),
-            _ => {}
-        }
-    }
-
-    capture_task.await??;
-    Ok(())
+fn main() {
+    log_info("Starting Vakthund IDPS application...");
+    run_vakthund();
+    log_info("Vakthund IDPS application terminated.");
 }
