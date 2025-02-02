@@ -12,5 +12,7 @@ vakthund-protocol = { path = "../vakthund-protocol" }
 vakthund-detection = { path = "../vakthund-detection" }
 vakthund-monitor = { path = "../vakthund-monitor" }
 vakthund-simulation = { path = "../vakthund-simulation" }
+
 serde_json = "1.0"
 chrono = "0.4"
+crossbeam-channel = "0.5.14"

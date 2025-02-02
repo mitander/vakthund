@@ -7,3 +7,4 @@ edition = "2021"
 
 [dependencies]
 vakthund-common = { path = "../vakthund-common" }
+nom = "8.0.0"

@@ -4,6 +4,6 @@
 //!
 //! Provides a unified capture interface. Currently, only the simulation capture is implemented.
 
-pub mod simulation_capture;
+pub mod live_capture;
 
-pub use simulation_capture::simulate_capture_loop;
+pub use live_capture::live_capture_loop;

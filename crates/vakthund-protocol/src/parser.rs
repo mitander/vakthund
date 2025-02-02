@@ -2,14 +2,33 @@
 //!
 //! Proprietary and confidential. All rights reserved.
 //!
-//! Parses a raw packet into a structured format. Expects the packet content to start with an ID token,
-//! followed by a protocol token and command token. For MQTT, a topic is expected; for COAP, a resource is expected.
+//! This module parses a raw packet (from `vakthund_common::packet::Packet`) into a structured format.
+//! The expected format is as follows:
+//!
+//!   ID:<number> <protocol> <command> [argument]
+//!
+//! For example, an MQTT packet might be:
+//!
+//!   ID:12 MQTT CONNECT alert_topic
+//!
+//! For COAP packets, a resource is expected after the method token.
+//!
 //! Unrecognized protocols yield a Generic packet.
+//!
+//! This parser uses nom version 8 for efficient, zero‑copy parsing.
 
+use nom::{
+    bytes::complete::{tag, take_while1},
+    character::complete::{digit1, space1},
+    combinator::{map_res, opt},
+    IResult,
+    Parser, // Import the Parser trait so that we can call .parse(input)
+};
 use std::str::FromStr;
 use vakthund_common::errors::PacketError;
 use vakthund_common::packet::Packet;
 
+/// Supported protocols.
 #[derive(Debug)]
 pub enum Protocol {
     MQTT,
@@ -28,6 +47,7 @@ impl FromStr for Protocol {
     }
 }
 
+/// Supported MQTT commands.
 #[derive(Debug)]
 pub enum MqttCommand {
     Connect,
@@ -45,6 +65,7 @@ impl FromStr for MqttCommand {
     }
 }
 
+/// Supported COAP methods.
 #[derive(Debug)]
 pub enum CoapMethod {
     Get,
@@ -62,6 +83,7 @@ impl FromStr for CoapMethod {
     }
 }
 
+/// Parsed packet types.
 #[derive(Debug)]
 pub enum ParsedPacket {
     Mqtt {
@@ -78,59 +100,83 @@ pub enum ParsedPacket {
     },
 }
 
+/// Parses a Packet into a ParsedPacket using nom.
 pub fn parse_packet(packet: &Packet) -> Result<ParsedPacket, PacketError> {
     let s = packet.as_str().ok_or(PacketError::InvalidUtf8)?;
-    let mut parts = s.split_whitespace();
-
-    let id_token = parts
-        .next()
-        .ok_or_else(|| PacketError::FormatError("Missing ID token".to_string()))?;
-    if !id_token.starts_with("ID:") {
-        return Err(PacketError::FormatError(
-            "Expected ID token at start".to_string(),
-        ));
+    match parse_nom(s) {
+        Ok(("", result)) => Ok(result),
+        Ok((remaining, _)) => Err(PacketError::FormatError(format!(
+            "Unparsed data remaining: {}",
+            remaining
+        ))),
+        Err(_) => Err(PacketError::FormatError("Failed to parse packet".into())),
     }
+}
 
-    let protocol_token = parts
-        .next()
-        .ok_or_else(|| PacketError::FormatError("Missing protocol token".to_string()))?;
-    let protocol = Protocol::from_str(protocol_token)?;
+/// Nom-based parser implementation.
+fn parse_nom(input: &str) -> IResult<&str, ParsedPacket> {
+    // Parse the "ID:" token.
+    let (input, _) = tag("ID:").parse(input)?;
+    // Parse the packet number (digits).
+    let (input, _id) = map_res(digit1, |s: &str| s.parse::<usize>()).parse(input)?;
+    let (input, _) = space1.parse(input)?;
 
-    let command_token = parts
-        .next()
-        .ok_or_else(|| PacketError::FormatError("Missing command token".to_string()))?;
+    // Parse the protocol token (alphanumeric).
+    let (input, protocol_str) = take_while1(|c: char| c.is_alphanumeric()).parse(input)?;
+    let protocol = Protocol::from_str(protocol_str).map_err(|_| {
+        nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Tag))
+    })?;
+    let (input, _) = space1.parse(input)?;
+
+    // Parse the command token (alphanumeric).
+    let (input, command_str) = take_while1(|c: char| c.is_alphanumeric()).parse(input)?;
+    let (input, _) = opt(space1).parse(input)?;
 
     match protocol {
         Protocol::MQTT => {
-            let cmd = MqttCommand::from_str(command_token)?;
+            let cmd = MqttCommand::from_str(command_str).map_err(|_| {
+                nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Tag))
+            })?;
             if let MqttCommand::Connect = cmd {
-                let topic = parts.next().ok_or_else(|| {
-                    PacketError::FormatError("Missing topic for MQTT CONNECT".to_string())
-                })?;
-                Ok(ParsedPacket::Mqtt {
-                    command: MqttCommand::Connect,
-                    topic: topic.to_string(),
-                })
-            } else {
-                Err(PacketError::FormatError(
-                    "Unsupported MQTT command".to_string(),
+                // Parse the topic.
+                let (input, topic) = take_while1(|c: char| !c.is_whitespace()).parse(input)?;
+                Ok((
+                    input,
+                    ParsedPacket::Mqtt {
+                        command: MqttCommand::Connect,
+                        topic: topic.to_string(),
+                    },
                 ))
+            } else {
+                Err(nom::Err::Failure(nom::error::Error::new(
+                    input,
+                    nom::error::ErrorKind::Tag,
+                )))
             }
         }
         Protocol::COAP => {
-            let method = CoapMethod::from_str(command_token)?;
-            let resource = parts.next().ok_or_else(|| {
-                PacketError::FormatError("Missing resource for COAP packet".to_string())
+            let method = CoapMethod::from_str(command_str).map_err(|_| {
+                nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Tag))
             })?;
-            Ok(ParsedPacket::Coap {
-                method,
-                resource: resource.to_string(),
-            })
+            let (input, resource) = take_while1(|c: char| !c.is_whitespace()).parse(input)?;
+            Ok((
+                input,
+                ParsedPacket::Coap {
+                    method,
+                    resource: resource.to_string(),
+                },
+            ))
         }
         Protocol::Other(_) => {
-            let header = format!("{} {}", protocol_token, command_token);
-            let payload = parts.collect::<Vec<&str>>().join(" ");
-            Ok(ParsedPacket::Generic { header, payload })
+            let header = format!("{} {}", protocol_str, command_str);
+            let payload = input.trim();
+            Ok((
+                "",
+                ParsedPacket::Generic {
+                    header,
+                    payload: payload.to_string(),
+                },
+            ))
         }
     }
 }

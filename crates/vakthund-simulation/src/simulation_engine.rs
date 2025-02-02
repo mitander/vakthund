@@ -17,8 +17,6 @@ use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
-use tracing::info;
-use vakthund_common::packet::Packet;
 
 #[derive(Debug, Clone)]
 pub struct SimEvent {
@@ -57,7 +55,7 @@ pub struct SimulationEngine<S: Storage> {
     pub storage: S,
     pub seed: u64,
     pub rng: StdRng,
-    pub event_queue: BinaryHeap<Event>,
+    event_queue: BinaryHeap<Event>,
 }
 
 impl<S: Storage> SimulationEngine<S> {
@@ -129,7 +127,7 @@ pub fn run_simulation<S, F>(
     terminate: &Arc<AtomicBool>,
     seed: Option<u64>,
     replay_target: Option<usize>,
-    mut storage: S,
+    storage: S,
     mut callback: F,
 ) where
     S: Storage,
@@ -175,14 +173,14 @@ pub fn run_simulation<S, F>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::{InMemoryStorage, Storage};
+    use crate::storage::InMemoryStorage;
     use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
 
     #[test]
     fn test_simulation_engine_replay() {
         let terminate = Arc::new(AtomicBool::new(false));
-        let mut storage = InMemoryStorage::new();
+        let storage = InMemoryStorage::new();
         let seed = Some(42);
         let replay_target = Some(3);
         let mut events: Vec<String> = Vec::new();

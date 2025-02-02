@@ -8,8 +8,9 @@ edition = "2021"
 [dependencies]
 vakthund-common = { path = "../vakthund-common" }
 ctrlc = "3"
-rand = "0.8"
+rand = "0.9"
 sha2 = "0.10"
 hex = "0.4"
 chrono = "0.4.39"
 tracing = "0.1.41"
+pcap = "2.2"
