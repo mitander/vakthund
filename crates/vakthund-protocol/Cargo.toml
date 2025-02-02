@@ -2,8 +2,8 @@
 name = "vakthund-protocol"
 version = "0.1.0"
 edition = "2021"
-description = "Protocol analyzer for Vakthund with MQTT and CoAP support"
-license = "MIT"
+
+# Proprietary and confidential. All rights reserved.
 
 [dependencies]
 vakthund-common = { path = "../vakthund-common" }

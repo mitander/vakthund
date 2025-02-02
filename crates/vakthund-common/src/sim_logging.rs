@@ -1,12 +1,14 @@
-//! # Simulation Logging Module
+//! Simulation Logging Module
+//!
+//! Proprietary and confidential. All rights reserved.
 //!
 //! Initializes structured JSON logging for simulation runs. Logs are written to a file
 //! in the `simulation_logs/` folder named "simulation_<seed>.log". Each log entry includes
-//! contextual metadata such as the simulation seed, event ID, and timestamp.
+//! the simulation seed, event ID, and timestamp.
 
 use std::fs::{create_dir_all, OpenOptions};
 use std::io::BufWriter;
-use std::os::unix::fs::OpenOptionsExt; // Needed to set permissions on Unix.
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::sync::Mutex;
 use tracing::info;
@@ -20,7 +22,6 @@ pub fn init_simulation_logging(seed: u64) {
         create_dir_all(log_folder).expect("Failed to create simulation_logs folder");
     }
     let file_name = format!("{}/simulation_{}.log", log_folder, seed);
-    // Use OpenOptions to create the file with mode 0o644 so the user can delete it later.
     let file = OpenOptions::new()
         .create(true)
         .write(true)
@@ -33,8 +34,8 @@ pub fn init_simulation_logging(seed: u64) {
 
     tracing_subscriber::fmt()
         .with_writer(make_writer)
-        .json() // Use JSON formatting.
-        .with_timer(UtcTime::rfc_3339()) // Use RFC3339 timestamps.
+        .json()
+        .with_timer(UtcTime::rfc_3339())
         .with_env_filter(EnvFilter::new("info"))
         .init();
 

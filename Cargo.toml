@@ -10,11 +10,13 @@ path = "src/main.rs"
 
 [workspace]
 members = [
-  "crates/vakthund-common",
-  "crates/vakthund-capture",
-  "crates/vakthund-protocol",
-  "crates/vakthund-detection",
-  "crates/vakthund-core",
+    "crates/vakthund-common",
+    "crates/vakthund-capture",
+    "crates/vakthund-protocol",
+    "crates/vakthund-detection",
+    "crates/vakthund-monitor",
+    "crates/vakthund-core",
+    "crates/vakthund-simulation"
 ]
 
 [dependencies]

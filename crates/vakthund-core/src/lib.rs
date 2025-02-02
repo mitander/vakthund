@@ -1,7 +1,7 @@
-//! # Vakthund Core Library
+//! Vakthund Core Library
 //!
-//! This crate contains the core logic for the Vakthund IDPS, including the business pipeline
-//! and a deterministic simulation engine for testing and replay purposes.
+//! Proprietary and confidential. All rights reserved.
+//!
+//! Integrates all components of the Vakthund IDPS into a cohesive pipeline.
 
 pub mod pipeline;
-pub mod simulation_engine;

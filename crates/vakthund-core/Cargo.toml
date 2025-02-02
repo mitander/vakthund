@@ -2,8 +2,8 @@
 name = "vakthund-core"
 version = "0.1.0"
 edition = "2021"
-description = "Vakthund Core integrates all modules into a working IDS pipeline"
-license = "MIT"
+
+# Proprietary and confidential. All rights reserved.
 
 [dependencies]
 vakthund-common = { path = "../vakthund-common" }
@@ -11,10 +11,6 @@ vakthund-capture = { path = "../vakthund-capture" }
 vakthund-protocol = { path = "../vakthund-protocol" }
 vakthund-detection = { path = "../vakthund-detection" }
 vakthund-monitor = { path = "../vakthund-monitor" }
-sha2 = "0.10"
-hex = "0.4"
-serde = { version = "1.0", features = ["derive"] }
+vakthund-simulation = { path = "../vakthund-simulation" }
 serde_json = "1.0"
 chrono = "0.4"
-rand = "0.8"
-tracing = "0.1.41"

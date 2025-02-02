@@ -2,8 +2,9 @@
 name = "vakthund-monitor"
 version = "0.1.0"
 edition = "2021"
-description = "Traffic monitor for Vakthund IDPS that applies quarantines and thresholds"
-license = "MIT"
+
+# Proprietary and confidential. All rights reserved.
 
 [dependencies]
+vakthund-protocol = { path = "../vakthund-protocol" }
 vakthund-common = { path = "../vakthund-common" }

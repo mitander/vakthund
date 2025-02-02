@@ -1,7 +1,9 @@
-//! # Vakthund Common
+//! vakthund-common
 //!
-//! Contains shared types, custom errors, and utilities for all Vakthund modules.
-//! Implements zero‑copy packet data using `Arc<[u8]>` and minimal logging utilities.
+//! Proprietary and confidential. All rights reserved.
+//!
+//! Contains shared types and utilities (configuration, errors, packet abstraction, logging, and simulation logging)
+//! for the Vakthund system.
 
 pub mod config;
 pub mod errors;

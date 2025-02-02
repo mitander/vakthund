@@ -1,6 +1,9 @@
-//! # CoAP Parser
+//! COAP Parser
 //!
-//! Provides a specialized function to parse COAP packets.
+//! Proprietary and confidential. All rights reserved.
+//!
+//! Provides a wrapper for parsing COAP packets using the generic parser.
+
 use crate::parser::{parse_packet, ParsedPacket};
 use vakthund_common::packet::Packet;
 

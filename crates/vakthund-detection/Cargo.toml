@@ -2,8 +2,8 @@
 name = "vakthund-detection"
 version = "0.1.0"
 edition = "2021"
-description = "Detection engine for Vakthund that analyzes parsed packets"
-license = "MIT"
+
+# Proprietary and confidential. All rights reserved.
 
 [dependencies]
 vakthund-protocol = { path = "../vakthund-protocol" }

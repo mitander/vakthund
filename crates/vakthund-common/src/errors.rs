@@ -1,6 +1,8 @@
-//! # Custom Errors
+//! Custom Errors
 //!
-//! Defines custom error types for Vakthund modules.
+//! Proprietary and confidential. All rights reserved.
+//!
+//! Defines custom error types for Vakthund modules using `thiserror`.
 
 use thiserror::Error;
 

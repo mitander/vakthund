@@ -1,6 +1,9 @@
-//! # MQTT Parser
+//! MQTT Parser
 //!
-//! Provides a specialized function to parse MQTT packets.
+//! Proprietary and confidential. All rights reserved.
+//!
+//! Provides a wrapper for parsing MQTT packets using the generic parser.
+
 use crate::parser::{parse_packet, ParsedPacket};
 use vakthund_common::packet::Packet;
 

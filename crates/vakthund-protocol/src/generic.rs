@@ -1,7 +1,8 @@
-//! # Generic Parser
+//! Generic Parser
 //!
-//! Parses packets using a generic format by simply treating the entire packet content as a string.
-//! This function returns a Generic variant of ParsedPacket, with header and payload both as owned Strings.
+//! Proprietary and confidential. All rights reserved.
+//!
+//! Serves as a fallback parser that treats the entire packet content as a generic message.
 
 use crate::parser::ParsedPacket;
 use vakthund_common::packet::Packet;
