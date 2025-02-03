@@ -5,10 +5,10 @@
 //! This module loads configuration, sets up monitoring, and runs the capture system in a unified,
 //! event‑driven architecture. Both live capture (using pcap) and simulation capture push events into
 //! a common event bus. A dedicated worker thread processes events via an EventProcessor, which
-//! dispatches events (PacketCaptured, AlertRaised, PreventionAction, SnapshotTaken) to their handlers.
+//! dispatches events (PacketCaptured, AlertRaised, PreventionAction, SnapshotTaken) to appropriate handlers.
 //!
 //! When an error occurs, a bug report is generated. In simulation mode, the bug report includes an extended
-//! snapshot (containing the monitor state and a history of recent events) that can later be loaded for replay.
+//! snapshot (monitor state and recent event history) that can later be loaded for replay.
 
 use crate::event_bus::{Event, EventBus};
 use crate::event_processor::EventProcessor;
@@ -31,7 +31,7 @@ use vakthund_simulation::storage::InMemoryStorage;
 
 const RECENT_EVENTS_CAPACITY: usize = 100;
 
-/// Generates an extended snapshot that includes both the monitor state and recent events.
+/// Generates an extended snapshot that includes monitor state and recent events.
 fn generate_extended_snapshot(
     monitor: &Arc<Mutex<vakthund_monitor::monitor::Monitor>>,
     recent_events: &Arc<Mutex<VecDeque<String>>>,
@@ -48,7 +48,7 @@ fn generate_extended_snapshot(
 }
 
 /// Generates a bug report as a JSON file in the `bug_reports/` folder.
-/// In simulation mode, it includes a snapshot (extended with recent events) for replay.
+/// In simulation mode, it includes an extended snapshot with monitor state and recent events.
 fn generate_bug_report(
     config: &Config,
     monitor: &Arc<Mutex<vakthund_monitor::monitor::Monitor>>,
@@ -110,7 +110,7 @@ fn extract_packet_id(content: &str) -> Option<usize> {
     }
 }
 
-/// Optionally loads a snapshot for replay if SNAPSHOT_PATH is provided.
+/// Optionally loads a snapshot from SNAPSHOT_PATH for replay.
 fn maybe_load_snapshot(monitor: &Arc<Mutex<vakthund_monitor::monitor::Monitor>>) {
     if let Ok(snapshot_path) = env::var("SNAPSHOT_PATH") {
         log_info(&format!(
@@ -138,7 +138,7 @@ fn maybe_load_snapshot(monitor: &Arc<Mutex<vakthund_monitor::monitor::Monitor>>)
 }
 
 /// Loads a snapshot from a JSON string and updates the monitor state.
-/// Assumes the Monitor implements Deserialize.
+/// Assumes that Monitor implements Deserialize.
 fn load_snapshot(
     monitor: &Arc<Mutex<vakthund_monitor::monitor::Monitor>>,
     snapshot_data: &str,
@@ -173,7 +173,7 @@ pub fn run_vakthund() {
         &mon_config,
     )));
 
-    // Optionally load a snapshot if the SNAPSHOT_PATH variable is set.
+    // Optionally load a snapshot if SNAPSHOT_PATH is set.
     maybe_load_snapshot(&monitor);
 
     // Create a ring buffer to record recent events.
@@ -252,7 +252,7 @@ pub fn run_vakthund() {
     }
     log_info("Vakthund IDPS pipeline execution complete.");
 
-    // For demonstration: if a flag is set, generate a dummy bug report.
+    // For demonstration: if GENERATE_BUG_REPORT is set, generate a dummy bug report.
     if env::var("GENERATE_BUG_REPORT").is_ok() {
         let dummy_packet_content = "ID:999 Dummy error packet";
         if let Some(packet_id) = extract_packet_id(dummy_packet_content) {

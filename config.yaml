@@ -13,3 +13,6 @@ monitor:
     port_entropy: 2.5
   whitelist:
     - "192.168.1.1"
+
+alert_methods:
+  - syslog

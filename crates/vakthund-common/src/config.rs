@@ -11,12 +11,30 @@ use std::fs;
 pub const CONFIG_FILE: &str = "config.yaml";
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct Config {
-    pub capture: CaptureConfig,
-    pub monitor: MonitorConfig,
+#[serde(rename_all = "lowercase")]
+pub enum AlertMethod {
+    // TODO: add additional alert channels such as Dashboard, SMS, etc.
+    Syslog,
+    Email,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct Config {
+    pub capture: CaptureConfig,
+    pub monitor: MonitorConfig,
+    pub alert_methods: Vec<AlertMethod>,
+}
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            capture: CaptureConfig::default(),
+            monitor: MonitorConfig::default(),
+            alert_methods: vec![AlertMethod::Syslog],
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct CaptureConfig {
     #[serde(default = "default_mode")]
     pub mode: CaptureMode,
@@ -31,21 +49,22 @@ fn default_mode() -> CaptureMode {
     CaptureMode::Live
 }
 
-#[derive(Debug, Deserialize, Serialize, PartialEq, Eq, Clone)]
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq, Clone, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum CaptureMode {
+    #[default]
     Live,
     Simulation,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct MonitorConfig {
     pub quarantine_timeout: u64,
     pub thresholds: Thresholds,
     pub whitelist: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct Thresholds {
     pub packet_rate: f64,
     pub data_volume: f64,

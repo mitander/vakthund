@@ -2,10 +2,9 @@
 //!
 //! Proprietary and confidential. All rights reserved.
 //!
-//! This module dispatches transient events to their appropriate handlers. It does not maintain
-//! a heavyweight global state but simply processes events as they arrive. The processor handles
-//! packet capture, alerts, prevention actions, and snapshots. Future external integrations (e.g.,
-//! notifications, firewall updates) can be added by extending the respective handler functions.
+//! This module dispatches events to their respective handlers. It integrates alert functionality
+//! via multiple channels (syslog or email), active prevention via iptables, and snapshot generation.
+//! The alert method is configurable via an enum. This design is modular and extensible.
 
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
@@ -13,14 +12,14 @@ use serde_json;
 use std::error::Error;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
-use vakthund_common::config::Config;
+use vakthund_common::config::{AlertMethod, Config};
 use vakthund_common::logger::{log_error, log_info, log_warn};
 use vakthund_common::packet::Packet;
 use vakthund_detection::analyzer::{analyze_packet, DetectionResult};
 use vakthund_monitor::monitor::Monitor;
 use vakthund_protocol::parser::parse_packet;
 
-/// The EventProcessor dispatches events to the appropriate handler functions.
+/// The EventProcessor dispatches events to appropriate handlers.
 pub struct EventProcessor {
     pub config: Config,
     pub monitor: Arc<Mutex<Monitor>>,
@@ -34,7 +33,6 @@ impl EventProcessor {
 
     /// Handles a PacketCaptured event.
     pub fn handle_packet(&self, packet: Packet) {
-        // Update monitor state.
         {
             let mut mon = self.monitor.lock().unwrap();
             mon.process_packet(&packet);
@@ -45,7 +43,6 @@ impl EventProcessor {
                 }
             }
         }
-        // Parse and analyze the packet.
         match parse_packet(&packet) {
             Ok(parsed) => match analyze_packet(&parsed) {
                 DetectionResult::ThreatDetected(details) => {
@@ -64,16 +61,15 @@ impl EventProcessor {
                     "Parsing failed for packet: {}, error: {}",
                     packet_content, e
                 ));
-                // You could generate a bug report here if desired.
             }
         }
     }
 
-    /// Handles an AlertRaised event by sending an email notification.
+    /// Handles an AlertRaised event by sending an alert using the configured method.
     pub fn handle_alert(&self, details: &str, packet: Packet) {
         log_warn(&format!("ALERT: {}. Packet: {:?}", details, packet));
-        if let Err(e) = send_mail_alarm(details, &packet) {
-            log_error(&format!("Failed to send alert email: {}", e));
+        if let Err(e) = send_alert(&self.config.alert_methods, details, &packet) {
+            log_error(&format!("Failed to send alert: {}", e));
         }
     }
 
@@ -96,7 +92,6 @@ impl EventProcessor {
         match generate_snapshot(&self.monitor) {
             Ok(snapshot_data) => {
                 log_info(&format!("Snapshot generated: {}", snapshot_data));
-                // Future: persist or load this snapshot as needed.
             }
             Err(e) => {
                 log_error(&format!("Failed to generate snapshot: {}", e));
@@ -105,25 +100,52 @@ impl EventProcessor {
     }
 }
 
+/// Sends an alert using all configured alert methods.
+fn send_alert(
+    alert_methods: &Vec<AlertMethod>,
+    details: &str,
+    packet: &Packet,
+) -> Result<(), Box<dyn Error>> {
+    for method in alert_methods {
+        match method {
+            AlertMethod::Syslog => send_syslog_alert(details, packet)?,
+            AlertMethod::Email => send_mail_alert(details, packet)?,
+        }
+    }
+    Ok(())
+}
+/// Sends an alert via syslog.
+fn send_syslog_alert(details: &str, packet: &Packet) -> Result<(), Box<dyn Error>> {
+    use syslog::{Facility, Formatter3164};
+    let formatter = Formatter3164 {
+        facility: Facility::LOG_USER,
+        hostname: None,
+        process: "vakthund".into(),
+        pid: 0,
+    };
+    let mut logger = syslog::unix(formatter)?;
+    logger.err(&format!("ALERT: {}. Packet: {:?}", details, packet))?;
+    Ok(())
+}
+
 /// Sends an alert email using lettre.
-fn send_mail_alarm(details: &str, packet: &Packet) -> Result<(), Box<dyn Error>> {
+fn send_mail_alert(details: &str, packet: &Packet) -> Result<(), Box<dyn Error>> {
     let email = Message::builder()
-        .from("alert@vakthund.com".parse()?)
-        .to("admin@vakthund.com".parse()?)
+        .from("alert@kapsel.com".parse()?)
+        .to("admin@kapsel.com".parse()?)
         .subject("Vakthund Alert Notification")
         .body(format!("Alert details: {}\nPacket: {:?}", details, packet))?;
 
     let creds = Credentials::new("username".into(), "password".into());
-    let mailer = SmtpTransport::relay("smtp.vakthund.com")?
+    let mailer = SmtpTransport::relay("smtp.kapsel.com")?
         .credentials(creds)
         .build();
 
     mailer.send(&email)?;
-    log_info("Alert email sent successfully.");
     Ok(())
 }
 
-/// Applies a firewall rule using iptables. For "Drop", adds a rule to drop packets from the given IP.
+/// Applies a firewall rule using iptables.
 fn apply_firewall_rule(action: &str, src_ip: &str) -> Result<(), Box<dyn Error>> {
     let rule = match action {
         "Drop" => format!("-A INPUT -s {} -j DROP", src_ip),
@@ -136,12 +158,10 @@ fn apply_firewall_rule(action: &str, src_ip: &str) -> Result<(), Box<dyn Error>>
     if !output.status.success() {
         return Err(format!("iptables command failed: {:?}", output).into());
     }
-    log_info(&format!("Firewall rule applied: {}", rule));
     Ok(())
 }
 
 /// Generates a snapshot of the current monitor state as a JSON string.
-/// Assumes the Monitor implements Serialize.
 fn generate_snapshot(monitor: &Arc<Mutex<Monitor>>) -> Result<String, Box<dyn Error>> {
     let mon = monitor.lock().unwrap();
     let snapshot = serde_json::to_string(&*mon)?;

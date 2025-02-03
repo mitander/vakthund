@@ -2,22 +2,23 @@
 //!
 //! Proprietary and confidential. All rights reserved.
 //!
-//! Implements a unified event‑based system using crossbeam‑channel. The Event enum supports
-//! a unified stream of events from various sources (live capture, simulation, etc.). Additional
-//! event types (AlertRaised, SnapshotTaken, PreventionAction) are defined here for future extension.
+//! Implements a unified event‑based system using crossbeam‑channel. The Event enum
+//! supports a unified stream of events from various sources (live capture, simulation, etc.).
+//! Additional event types (AlertRaised, SnapshotTaken, PreventionAction) are defined here
+//! for future extension.
 
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use vakthund_common::packet::Packet;
 
 #[derive(Debug)]
 pub enum Event {
-    /// A packet was captured (from live or simulation capture).
+    /// A packet was captured.
     PacketCaptured(Packet),
-    /// An alert event – for example, when a high‑severity threat is detected.
+    /// An alert event, e.g., when a threat is detected.
     AlertRaised { details: String, packet: Packet },
-    /// A snapshot event – used to capture system state for diagnostics or replay.
+    /// A snapshot event, capturing system state.
     SnapshotTaken { snapshot_data: String },
-    /// A prevention action event – triggered when active mitigation is applied.
+    /// A prevention action event, e.g., to trigger active mitigation.
     PreventionAction { action: String, packet: Packet },
 }
 
