@@ -2,15 +2,20 @@
 //!
 //! Proprietary and confidential. All rights reserved.
 //!
-//! Implements the main business pipeline for the Vakthund IDPS. Loads configuration, sets up monitoring,
-//! and runs either live capture or simulation. In simulation mode, captured packets are sent as events via
-//! an event bus; a separate worker thread processes these events. Live capture uses pcap to capture packets
-//! in real time.
+//! This module loads configuration, sets up monitoring, and runs the capture system in a unified,
+//! event‑driven architecture. Both live capture (using pcap) and simulation capture push events into
+//! a common event bus. A dedicated worker thread processes events via an EventProcessor, which
+//! dispatches events (PacketCaptured, AlertRaised, PreventionAction, SnapshotTaken) to their handlers.
 //!
-//! Parsing errors generate bug reports with detailed metadata.
+//! When an error occurs, a bug report is generated. In simulation mode, the bug report includes an extended
+//! snapshot (containing the monitor state and a history of recent events) that can later be loaded for replay.
 
+use crate::event_bus::{Event, EventBus};
+use crate::event_processor::EventProcessor;
 use chrono::Utc;
 use serde_json::json;
+use std::collections::VecDeque;
+use std::env;
 use std::fs::{create_dir_all, File};
 use std::io::Write;
 use std::path::Path;
@@ -19,18 +24,135 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use vakthund_capture::live_capture::live_capture_loop;
 use vakthund_common::config::{CaptureMode, Config, CONFIG_FILE};
-use vakthund_common::logger::{log_error, log_info, log_warn};
+use vakthund_common::logger::{init_logger, log_error, log_info};
 use vakthund_common::packet::Packet;
-use vakthund_detection::analyzer::{analyze_packet, DetectionResult};
-use vakthund_monitor::monitor::MonitorConfig;
-use vakthund_protocol::parser::parse_packet;
 use vakthund_simulation::run_simulation;
 use vakthund_simulation::storage::InMemoryStorage;
 
-// Import the EventBus from our event bus module.
-use crate::event_bus::{Event, EventBus};
+const RECENT_EVENTS_CAPACITY: usize = 100;
+
+/// Generates an extended snapshot that includes both the monitor state and recent events.
+fn generate_extended_snapshot(
+    monitor: &Arc<Mutex<vakthund_monitor::monitor::Monitor>>,
+    recent_events: &Arc<Mutex<VecDeque<String>>>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let mon = monitor.lock().unwrap();
+    let monitor_snapshot = serde_json::to_string(&*mon)?;
+    let events = recent_events.lock().unwrap();
+    let events_snapshot: Vec<String> = events.iter().cloned().collect();
+    let extended_snapshot = json!({
+        "monitor": serde_json::from_str::<serde_json::Value>(&monitor_snapshot)?,
+        "recent_events": events_snapshot,
+    });
+    Ok(extended_snapshot.to_string())
+}
+
+/// Generates a bug report as a JSON file in the `bug_reports/` folder.
+/// In simulation mode, it includes a snapshot (extended with recent events) for replay.
+fn generate_bug_report(
+    config: &Config,
+    monitor: &Arc<Mutex<vakthund_monitor::monitor::Monitor>>,
+    recent_events: &Arc<Mutex<VecDeque<String>>>,
+    packet_id: usize,
+    packet_content: &str,
+    error: &str,
+) {
+    let bug_folder = "bug_reports";
+    if !Path::new(bug_folder).exists() {
+        create_dir_all(bug_folder).expect("Failed to create bug_reports folder");
+    }
+    let timestamp = Utc::now().to_rfc3339();
+    let snapshot_path = if config.capture.mode == CaptureMode::Simulation {
+        match generate_extended_snapshot(monitor, recent_events) {
+            Ok(snapshot_data) => {
+                let snapshot_file = format!("{}/snapshot_{}.json", bug_folder, timestamp);
+                let mut file =
+                    File::create(&snapshot_file).expect("Failed to create snapshot file");
+                file.write_all(snapshot_data.as_bytes())
+                    .expect("Failed to write snapshot file");
+                Some(snapshot_file)
+            }
+            Err(e) => {
+                log_error(&format!("Failed to generate extended snapshot: {}", e));
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let bug_report = json!({
+        "timestamp": timestamp,
+        "config": config,
+        "seed": config.capture.seed,
+        "packet_id": packet_id,
+        "packet_content": packet_content,
+        "error": error,
+        "snapshot": snapshot_path
+    });
+    let file_name = format!("{}/bug_{}_packet_{}.json", bug_folder, timestamp, packet_id);
+    let mut file = File::create(&file_name).expect("Failed to create bug report file");
+    let report_str =
+        serde_json::to_string_pretty(&bug_report).expect("Failed to serialize bug report");
+    file.write_all(report_str.as_bytes())
+        .expect("Failed to write bug report file");
+    log_error(&format!("Bug report generated: {}", file_name));
+}
+
+/// Extracts the packet ID from packet content (expects "ID:<number> " prefix).
+fn extract_packet_id(content: &str) -> Option<usize> {
+    if content.starts_with("ID:") {
+        content
+            .split_whitespace()
+            .next()
+            .and_then(|id_str| id_str.trim_start_matches("ID:").parse().ok())
+    } else {
+        None
+    }
+}
+
+/// Optionally loads a snapshot for replay if SNAPSHOT_PATH is provided.
+fn maybe_load_snapshot(monitor: &Arc<Mutex<vakthund_monitor::monitor::Monitor>>) {
+    if let Ok(snapshot_path) = env::var("SNAPSHOT_PATH") {
+        log_info(&format!(
+            "Snapshot path provided: {}. Loading snapshot...",
+            snapshot_path
+        ));
+        match std::fs::read_to_string(&snapshot_path) {
+            Ok(snapshot_data) => {
+                if let Err(e) = load_snapshot(monitor, &snapshot_data) {
+                    log_error(&format!("Failed to load snapshot: {}", e));
+                } else {
+                    log_info("Snapshot loaded successfully.");
+                }
+            }
+            Err(e) => {
+                log_error(&format!(
+                    "Failed to read snapshot file {}: {}",
+                    snapshot_path, e
+                ));
+            }
+        }
+    } else {
+        log_info("No snapshot path provided; starting with current state.");
+    }
+}
+
+/// Loads a snapshot from a JSON string and updates the monitor state.
+/// Assumes the Monitor implements Deserialize.
+fn load_snapshot(
+    monitor: &Arc<Mutex<vakthund_monitor::monitor::Monitor>>,
+    snapshot_data: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let new_state = serde_json::from_str(snapshot_data)?;
+    let mut mon = monitor.lock().unwrap();
+    *mon = new_state;
+    log_info("Snapshot loaded and monitor state updated.");
+    Ok(())
+}
 
 pub fn run_vakthund() {
+    init_logger();
+
     // Load configuration.
     let config: Config = Config::load(CONFIG_FILE).unwrap_or_else(|e| {
         log_error(&format!("Failed to load config: {}", e));
@@ -39,8 +161,8 @@ pub fn run_vakthund() {
     log_info(&format!("Configuration loaded: {:?}", config));
     log_info("Starting Vakthund IDPS pipeline.");
 
-    // Create monitor configuration and wrap the monitor in an Arc<Mutex<_>> for sharing.
-    let mon_config = MonitorConfig::new(
+    // Create monitor configuration.
+    let mon_config = vakthund_monitor::monitor::MonitorConfig::new(
         config.monitor.quarantine_timeout,
         config.monitor.thresholds.packet_rate,
         config.monitor.thresholds.data_volume,
@@ -51,69 +173,54 @@ pub fn run_vakthund() {
         &mon_config,
     )));
 
+    // Optionally load a snapshot if the SNAPSHOT_PATH variable is set.
+    maybe_load_snapshot(&monitor);
+
+    // Create a ring buffer to record recent events.
+    let recent_events: Arc<Mutex<VecDeque<String>>> =
+        Arc::new(Mutex::new(VecDeque::with_capacity(RECENT_EVENTS_CAPACITY)));
+
     // Create a termination flag.
     let terminate = Arc::new(AtomicBool::new(false));
 
+    // Create a unified event bus.
+    let event_bus = EventBus::new();
+    let event_sender = event_bus.get_sender();
+
+    // Create an EventProcessor instance.
+    let event_processor = EventProcessor::new(config.clone(), monitor.clone());
+
+    // Spawn a worker thread to process events.
+    let recent_events_for_thread = recent_events.clone();
+    thread::spawn(move || {
+        for event in event_bus.get_receiver().iter() {
+            {
+                let mut events = recent_events_for_thread.lock().unwrap();
+                events.push_back(format!("{:?}", event));
+                if events.len() > RECENT_EVENTS_CAPACITY {
+                    events.pop_front();
+                }
+            }
+            match event {
+                Event::PacketCaptured(packet) => {
+                    event_processor.handle_packet(packet);
+                }
+                Event::AlertRaised { details, packet } => {
+                    event_processor.handle_alert(&details, packet);
+                }
+                Event::PreventionAction { action, packet } => {
+                    event_processor.handle_prevention(&action, packet);
+                }
+                Event::SnapshotTaken { snapshot_data } => {
+                    event_processor.handle_snapshot(&snapshot_data);
+                }
+            }
+        }
+    });
+
+    // Both live and simulation capture push PacketCaptured events into the event bus.
     match config.capture.mode {
         CaptureMode::Simulation => {
-            let event_bus = EventBus::new();
-            let event_sender = event_bus.get_sender();
-            let monitor_for_thread = monitor.clone();
-            let config_for_thread = config.clone();
-
-            // Spawn a thread to process events.
-            thread::spawn(move || {
-                for crate::event_bus::Event::PacketCaptured(packet) in
-                    event_bus.get_receiver().iter()
-                {
-                    // Lock the monitor and process the packet.
-                    {
-                        let mut mon = monitor_for_thread.lock().unwrap();
-                        mon.process_packet(&packet);
-                        if let Some(src_ip) =
-                            vakthund_monitor::monitor::Monitor::extract_src_ip(&packet)
-                        {
-                            if mon.is_quarantined(&src_ip) {
-                                log_warn(&format!(
-                                    "Packet from quarantined IP {} dropped.",
-                                    src_ip
-                                ));
-                                continue;
-                            }
-                        }
-                    }
-                    // Process parsing and analysis.
-                    match parse_packet(&packet) {
-                        Ok(parsed) => match analyze_packet(&parsed) {
-                            vakthund_detection::analyzer::DetectionResult::ThreatDetected(
-                                details,
-                            ) => {
-                                log_warn(&format!("Threat detected: {}", details));
-                                prevent_threat(&details);
-                            }
-                            vakthund_detection::analyzer::DetectionResult::NoThreat => {
-                                log_info("Packet processed with no threat.");
-                            }
-                        },
-                        Err(e) => {
-                            let packet_content = packet.as_str().unwrap_or("<invalid UTF-8>");
-                            log_error(&format!(
-                                "Parsing failed for packet: {}, error: {}",
-                                packet_content, e
-                            ));
-                            if let Some(packet_id) = extract_packet_id(packet_content) {
-                                generate_bug_report(
-                                    &config_for_thread,
-                                    packet_id,
-                                    packet_content,
-                                    &e.to_string(),
-                                );
-                            }
-                        }
-                    }
-                }
-            });
-            // Run the simulation capture loop, sending events to the event bus.
             let replay_target: Option<usize> = None;
             let storage = InMemoryStorage::new();
             run_simulation(
@@ -136,94 +243,27 @@ pub fn run_vakthund() {
                 config.capture.promiscuous,
                 &terminate,
                 &mut |packet: Packet| {
-                    // Lock monitor for processing.
-                    {
-                        let mut mon = monitor.lock().unwrap();
-                        mon.process_packet(&packet);
-                        if let Some(src_ip) =
-                            vakthund_monitor::monitor::Monitor::extract_src_ip(&packet)
-                        {
-                            if mon.is_quarantined(&src_ip) {
-                                log_warn(&format!(
-                                    "Packet from quarantined IP {} dropped.",
-                                    src_ip
-                                ));
-                                return;
-                            }
-                        }
-                    }
-                    match parse_packet(&packet) {
-                        Ok(parsed) => match analyze_packet(&parsed) {
-                            DetectionResult::ThreatDetected(details) => {
-                                log_warn(&format!("Threat detected: {}", details));
-                                prevent_threat(&details);
-                            }
-                            DetectionResult::NoThreat => {
-                                log_info("Packet processed with no threat.");
-                            }
-                        },
-                        Err(e) => {
-                            let packet_content = packet.as_str().unwrap_or("<invalid UTF-8>");
-                            log_error(&format!(
-                                "Parsing failed for packet: {}, error: {}",
-                                packet_content, e
-                            ));
-                            if let Some(packet_id) = extract_packet_id(packet_content) {
-                                generate_bug_report(
-                                    &config,
-                                    packet_id,
-                                    packet_content,
-                                    &e.to_string(),
-                                );
-                            }
-                        }
-                    }
+                    event_sender
+                        .send(Event::PacketCaptured(packet))
+                        .expect("Failed to send event");
                 },
             );
         }
     }
     log_info("Vakthund IDPS pipeline execution complete.");
-}
 
-fn prevent_threat(details: &str) {
-    log_info(&format!(
-        "Executing prevention action for threat: {}",
-        details
-    ));
-}
-
-/// Extracts the packet ID from the packet content (expects content to start with "ID:<number> ").
-fn extract_packet_id(content: &str) -> Option<usize> {
-    if content.starts_with("ID:") {
-        content
-            .split_whitespace()
-            .next()
-            .and_then(|id_str| id_str.trim_start_matches("ID:").parse().ok())
-    } else {
-        None
+    // For demonstration: if a flag is set, generate a dummy bug report.
+    if env::var("GENERATE_BUG_REPORT").is_ok() {
+        let dummy_packet_content = "ID:999 Dummy error packet";
+        if let Some(packet_id) = extract_packet_id(dummy_packet_content) {
+            generate_bug_report(
+                &config,
+                &monitor,
+                &recent_events,
+                packet_id,
+                dummy_packet_content,
+                "Dummy error triggered bug report",
+            );
+        }
     }
-}
-
-/// Generates a bug report as a JSON file in the `bug_reports/` folder.
-fn generate_bug_report(config: &Config, packet_id: usize, packet_content: &str, error: &str) {
-    let bug_folder = "bug_reports";
-    if !Path::new(bug_folder).exists() {
-        create_dir_all(bug_folder).expect("Failed to create bug_reports folder");
-    }
-    let timestamp = Utc::now().to_rfc3339();
-    let file_name = format!("{}/bug_{}_packet_{}.json", bug_folder, timestamp, packet_id);
-    let bug_report = json!({
-        "timestamp": timestamp,
-        "config": config,
-        "seed": config.capture.seed,
-        "packet_id": packet_id,
-        "packet_content": packet_content,
-        "error": error
-    });
-    let mut file = File::create(&file_name).expect("Failed to create bug report file");
-    let report_str =
-        serde_json::to_string_pretty(&bug_report).expect("Failed to serialize bug report");
-    file.write_all(report_str.as_bytes())
-        .expect("Failed to write bug report file");
-    log_error(&format!("Bug report generated: {}", file_name));
 }

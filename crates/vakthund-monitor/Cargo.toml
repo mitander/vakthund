@@ -6,5 +6,6 @@ edition = "2021"
 # Proprietary and confidential. All rights reserved.
 
 [dependencies]
+serde = "1.0.217"
 vakthund-protocol = { path = "../vakthund-protocol" }
 vakthund-common = { path = "../vakthund-common" }

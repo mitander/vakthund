@@ -2,20 +2,25 @@
 //!
 //! Proprietary and confidential. All rights reserved.
 //!
-//! Implements an event‑based system using crossbeam‑channel. This module defines an
-//! `Event` enum and an `EventBus` to decouple packet capture from processing.
+//! Implements a unified event‑based system using crossbeam‑channel. The Event enum supports
+//! a unified stream of events from various sources (live capture, simulation, etc.). Additional
+//! event types (AlertRaised, SnapshotTaken, PreventionAction) are defined here for future extension.
 
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use vakthund_common::packet::Packet;
 
-/// Represents system events.
 #[derive(Debug)]
 pub enum Event {
+    /// A packet was captured (from live or simulation capture).
     PacketCaptured(Packet),
-    // Future events (e.g. Snapshot, Alert, etc.) can be added here.
+    /// An alert event – for example, when a high‑severity threat is detected.
+    AlertRaised { details: String, packet: Packet },
+    /// A snapshot event – used to capture system state for diagnostics or replay.
+    SnapshotTaken { snapshot_data: String },
+    /// A prevention action event – triggered when active mitigation is applied.
+    PreventionAction { action: String, packet: Packet },
 }
 
-/// A simple event bus built on an unbounded channel.
 pub struct EventBus {
     sender: Sender<Event>,
     receiver: Receiver<Event>,
@@ -36,5 +41,11 @@ impl EventBus {
     /// Returns a clone of the event receiver.
     pub fn get_receiver(&self) -> Receiver<Event> {
         self.receiver.clone()
+    }
+}
+
+impl Default for EventBus {
+    fn default() -> Self {
+        Self::new()
     }
 }

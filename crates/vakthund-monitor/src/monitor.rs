@@ -6,6 +6,9 @@
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
+
+use serde::{Deserialize, Serialize};
+
 use vakthund_common::packet::Packet;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -14,7 +17,7 @@ pub enum DetectionResult {
     NoThreat,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MonitorConfig {
     pub quarantine_timeout: u64,
     pub packet_rate: f64,
@@ -41,14 +44,17 @@ impl MonitorConfig {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct TrafficStats {
     packet_count: usize,
     total_bytes: usize,
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct Monitor {
     config: MonitorConfig,
     stats: HashMap<String, TrafficStats>,
+    #[serde(skip)]
     quarantined: HashMap<String, Instant>,
 }
 
