@@ -9,9 +9,11 @@
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
 use serde_json;
+
 use std::error::Error;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
+
 use vakthund_common::config::{AlertMethod, Config};
 use vakthund_common::logger::{log_error, log_info, log_warn};
 use vakthund_common::packet::Packet;

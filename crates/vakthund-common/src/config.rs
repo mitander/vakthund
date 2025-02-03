@@ -57,11 +57,31 @@ pub enum CaptureMode {
     Simulation,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct MonitorConfig {
     pub quarantine_timeout: u64,
-    pub thresholds: Thresholds,
     pub whitelist: Vec<String>,
+    pub thresholds: Thresholds,
+}
+
+impl MonitorConfig {
+    pub fn new(
+        quarantine_timeout: u64,
+        packet_rate: f64,
+        data_volume: f64,
+        port_entropy: f64,
+        whitelist: Vec<String>,
+    ) -> Self {
+        Self {
+            quarantine_timeout,
+            whitelist,
+            thresholds: Thresholds {
+                packet_rate,
+                data_volume,
+                port_entropy,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]

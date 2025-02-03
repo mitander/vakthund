@@ -7,10 +7,12 @@
 //! Captured packets are converted to the common Packet type for further processing.
 
 use pcap::Capture;
+
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
+
 use vakthund_common::packet::Packet;
 
 /// Captures live packets from the specified interface and calls `callback` for each packet.

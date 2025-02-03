@@ -9,39 +9,13 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
+use vakthund_common::config::MonitorConfig;
 use vakthund_common::packet::Packet;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum DetectionResult {
     ThreatDetected(String),
     NoThreat,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct MonitorConfig {
-    pub quarantine_timeout: u64,
-    pub packet_rate: f64,
-    pub data_volume: f64,
-    pub port_entropy: f64,
-    pub whitelist: Vec<String>,
-}
-
-impl MonitorConfig {
-    pub fn new(
-        quarantine_timeout: u64,
-        packet_rate: f64,
-        data_volume: f64,
-        port_entropy: f64,
-        whitelist: Vec<String>,
-    ) -> Self {
-        Self {
-            quarantine_timeout,
-            packet_rate,
-            data_volume,
-            port_entropy,
-            whitelist,
-        }
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -80,8 +54,8 @@ impl Monitor {
             });
             stats.packet_count += 1;
             stats.total_bytes += packet.data.len();
-            if (stats.packet_count as f64) > self.config.packet_rate
-                || (stats.total_bytes as f64) > self.config.data_volume
+            if (stats.packet_count as f64) > self.config.thresholds.packet_rate
+                || (stats.total_bytes as f64) > self.config.thresholds.data_volume
             {
                 self.quarantined.insert(src_ip, Instant::now());
             }

@@ -24,7 +24,9 @@ use nom::{
     IResult,
     Parser, // Import the Parser trait so that we can call .parse(input)
 };
+
 use std::str::FromStr;
+
 use vakthund_common::errors::PacketError;
 use vakthund_common::packet::Packet;
 

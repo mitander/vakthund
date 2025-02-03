@@ -10,10 +10,9 @@
 //! When an error occurs, a bug report is generated. In simulation mode, the bug report includes an extended
 //! snapshot (monitor state and recent event history) that can later be loaded for replay.
 
-use crate::event_bus::{Event, EventBus};
-use crate::event_processor::EventProcessor;
 use chrono::Utc;
 use serde_json::json;
+
 use std::collections::VecDeque;
 use std::env;
 use std::fs::{create_dir_all, File};
@@ -22,18 +21,23 @@ use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::thread;
+
 use vakthund_capture::live_capture::live_capture_loop;
 use vakthund_common::config::{CaptureMode, Config, CONFIG_FILE};
 use vakthund_common::logger::{init_logger, log_error, log_info};
 use vakthund_common::packet::Packet;
+use vakthund_monitor::Monitor;
 use vakthund_simulation::run_simulation;
 use vakthund_simulation::storage::InMemoryStorage;
+
+use crate::event_bus::{Event, EventBus};
+use crate::event_processor::EventProcessor;
 
 const RECENT_EVENTS_CAPACITY: usize = 100;
 
 /// Generates an extended snapshot that includes monitor state and recent events.
 fn generate_extended_snapshot(
-    monitor: &Arc<Mutex<vakthund_monitor::monitor::Monitor>>,
+    monitor: &Arc<Mutex<Monitor>>,
     recent_events: &Arc<Mutex<VecDeque<String>>>,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let mon = monitor.lock().unwrap();
@@ -51,7 +55,7 @@ fn generate_extended_snapshot(
 /// In simulation mode, it includes an extended snapshot with monitor state and recent events.
 fn generate_bug_report(
     config: &Config,
-    monitor: &Arc<Mutex<vakthund_monitor::monitor::Monitor>>,
+    monitor: &Arc<Mutex<Monitor>>,
     recent_events: &Arc<Mutex<VecDeque<String>>>,
     packet_id: usize,
     packet_content: &str,
@@ -110,16 +114,60 @@ fn extract_packet_id(content: &str) -> Option<usize> {
     }
 }
 
-/// Optionally loads a snapshot from SNAPSHOT_PATH for replay.
-fn maybe_load_snapshot(monitor: &Arc<Mutex<vakthund_monitor::monitor::Monitor>>) {
-    if let Ok(snapshot_path) = env::var("SNAPSHOT_PATH") {
+// Helper function to load a snapshot from a JSON string and update the monitor state.
+// This requires that your Monitor type implements Deserialize.
+fn load_snapshot(
+    monitor: &Arc<Mutex<Monitor>>,
+    snapshot_data: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let new_state = serde_json::from_str(snapshot_data)?;
+    let mut mon = monitor.lock().unwrap();
+    *mon = new_state;
+    log_info("Snapshot loaded and monitor state updated.");
+    Ok(())
+}
+
+pub fn run_vakthund(sim_seed_override: Option<u64>, replay_hash: Option<&str>) {
+    init_logger();
+
+    // Load configuration from config.yaml.
+    let mut config: Config = Config::load(CONFIG_FILE).unwrap_or_else(|e| {
+        log_error(&format!("Failed to load config: {}", e));
+        std::process::exit(1);
+    });
+    log_info(&format!("Configuration loaded: {:?}", config));
+
+    // Override simulation seed if provided via CLI.
+    if let Some(seed) = sim_seed_override {
         log_info(&format!(
-            "Snapshot path provided: {}. Loading snapshot...",
+            "Overriding simulation seed with CLI flag: {}",
+            seed
+        ));
+        config.capture.seed = Some(seed);
+    }
+
+    // If replay_hash is provided, adjust config or internal state accordingly.
+    if let Some(hash) = replay_hash {
+        log_info(&format!("Replaying simulation for hash: {}", hash));
+        // For example, set a replay flag or update config with replay target.
+        // You might need to parse the hash (e.g., extract seed and packet id) and adjust your simulation accordingly.
+        config.capture.mode = CaptureMode::Simulation; // Ensure simulation mode is set.
+                                                       // Additional logic here: e.g., config.replay_target = Some(parsed_target);
+    }
+
+    log_info("Starting Vakthund IDPS pipeline.");
+
+    let monitor = Arc::new(Mutex::new(Monitor::new(&config.monitor)));
+
+    // If the replay_simulation flag is provided, load the snapshot from that file.
+    if let Some(snapshot_path) = replay_hash {
+        log_info(&format!(
+            "Replay simulation flag provided: {}. Loading snapshot...",
             snapshot_path
         ));
-        match std::fs::read_to_string(&snapshot_path) {
+        match std::fs::read_to_string(snapshot_path) {
             Ok(snapshot_data) => {
-                if let Err(e) = load_snapshot(monitor, &snapshot_data) {
+                if let Err(e) = load_snapshot(&monitor, &snapshot_data) {
                     log_error(&format!("Failed to load snapshot: {}", e));
                 } else {
                     log_info("Snapshot loaded successfully.");
@@ -132,50 +180,7 @@ fn maybe_load_snapshot(monitor: &Arc<Mutex<vakthund_monitor::monitor::Monitor>>)
                 ));
             }
         }
-    } else {
-        log_info("No snapshot path provided; starting with current state.");
     }
-}
-
-/// Loads a snapshot from a JSON string and updates the monitor state.
-/// Assumes that Monitor implements Deserialize.
-fn load_snapshot(
-    monitor: &Arc<Mutex<vakthund_monitor::monitor::Monitor>>,
-    snapshot_data: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let new_state = serde_json::from_str(snapshot_data)?;
-    let mut mon = monitor.lock().unwrap();
-    *mon = new_state;
-    log_info("Snapshot loaded and monitor state updated.");
-    Ok(())
-}
-
-pub fn run_vakthund() {
-    init_logger();
-
-    // Load configuration.
-    let config: Config = Config::load(CONFIG_FILE).unwrap_or_else(|e| {
-        log_error(&format!("Failed to load config: {}", e));
-        std::process::exit(1);
-    });
-    log_info(&format!("Configuration loaded: {:?}", config));
-    log_info("Starting Vakthund IDPS pipeline.");
-
-    // Create monitor configuration.
-    let mon_config = vakthund_monitor::monitor::MonitorConfig::new(
-        config.monitor.quarantine_timeout,
-        config.monitor.thresholds.packet_rate,
-        config.monitor.thresholds.data_volume,
-        config.monitor.thresholds.port_entropy,
-        config.monitor.whitelist.clone(),
-    );
-    let monitor = Arc::new(Mutex::new(vakthund_monitor::monitor::Monitor::new(
-        &mon_config,
-    )));
-
-    // Optionally load a snapshot if SNAPSHOT_PATH is set.
-    maybe_load_snapshot(&monitor);
-
     // Create a ring buffer to record recent events.
     let recent_events: Arc<Mutex<VecDeque<String>>> =
         Arc::new(Mutex::new(VecDeque::with_capacity(RECENT_EVENTS_CAPACITY)));

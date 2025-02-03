@@ -23,6 +23,8 @@ members = [
 vakthund-common = { path = "crates/vakthund-common" }
 vakthund-core   = { path = "crates/vakthund-core" }
 
+clap = "4.5.27"
+
 [dev-dependencies.cargo-husky]
 version = "1"
 default-features = false

@@ -8,6 +8,7 @@
 //! for future extension.
 
 use crossbeam_channel::{unbounded, Receiver, Sender};
+
 use vakthund_common::packet::Packet;
 
 #[derive(Debug)]

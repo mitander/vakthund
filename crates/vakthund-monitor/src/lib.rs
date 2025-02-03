@@ -5,4 +5,4 @@
 
 pub mod monitor;
 
-pub use monitor::{Monitor, MonitorConfig};
+pub use monitor::Monitor;
