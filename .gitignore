@@ -24,6 +24,5 @@ Cargo.lock
 
 /target
 
-# Simulation logs and bug reports
-/simulation_logs/
-/bug_reports/
+# Snapshots
+/snapshots

@@ -1,18 +1,26 @@
 capture:
-  mode: "simulation"         # Allowed values: "live" or "simulation"
-  interface: "en0"
-  buffer_size: 1048576
+  buffer_size: 4096
   promiscuous: true
-  seed: 42
+  flush_interval: 1s
 
-monitor:
-  quarantine_timeout: 600
+detection:
+  rules:
+    - "alert tcp any any -> any 80 (msg:\"HTTP Request detected\"; sid:1001;)"
+    - "alert udp any any -> any 53 (msg:\"DNS Request detected\"; sid:1002;)"
   thresholds:
-    packet_rate: 1000.0
-    data_volume: 10485760.0
-    port_entropy: 2.5
-  whitelist:
-    - "192.168.1.1"
+    max_alerts_per_second: 1000
 
-alert_methods:
-  - syslog
+simulation:
+  segment_size: 134217728  # 128 MB
+  time_scale: 1s
+
+reporting:
+  snapshots:
+    directory: "snapshots"
+    retention: 3600s
+  alerts:
+    console: true
+    syslog:
+      server: "localhost"
+      port: 514
+

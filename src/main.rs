@@ -1,41 +1,35 @@
-//! # Vakthund IDPS Application
+//! Main entry point for Vakthund IDPS
 //!
-//! Entry point for the Vakthund Intrusion Detection and Prevention System.
-//! It initializes logging and runs the core pipeline.
-use clap::{Arg, Command};
+//! This binary initializes the CLI, loads the configuration, sets up logging,
+//! and then starts the unified pipeline that handles capture (live or simulation),
+//! detection, prevention, monitoring, reporting, and replay if requested.
 
-use vakthund_common::logger::log_info;
-use vakthund_core::pipeline;
+mod cli;
+mod config;
+mod message_bus;
+mod pipeline;
+mod protocols;
+mod reporting;
+mod simulation;
 
-fn main() {
-    log_info("Starting Vakthund IDPS application...");
+use anyhow::Result;
+use clap::Parser;
+use tracing_subscriber;
 
-    let matches = Command::new("Vakthund IDPS")
-        .version("0.1.0")
-        .author("Your Name <you@example.com>")
-        .about("Unified event-driven IDPS with simulation and replay support")
-        .arg(
-            Arg::new("simulation_seed")
-                .long("simulation-seed")
-                .help("Overrides the simulation seed"),
-        )
-        .arg(
-            Arg::new("replay_simulation")
-                .long("replay-simulation")
-                .help(
-                "Replays a simulation by specifying a hash (seed + packet id) from a bug report",
-            ),
-        )
-        .get_matches();
+use cli::Cli;
+use config::Config;
+use pipeline::Pipeline;
 
-    let simulation_seed = matches
-        .get_one::<String>("simulation_seed")
-        .map(|s| s.parse::<u64>().expect("Invalid simulation seed"));
-    let replay_simulation = matches
-        .get_one::<String>("replay_simulation")
-        .map(String::as_str);
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+    cli.validate()?; // Validate CLI for conflicts (live vs. simulation vs. replay)
 
-    pipeline::run_vakthund(simulation_seed, replay_simulation);
+    let config = Config::load(&cli.config)?;
+    // Initialize tracing subscriber (console logging)
+    tracing_subscriber::fmt().init();
 
-    log_info("Vakthund IDPS application terminated.");
+    // Build and run the pipeline.
+    let pipeline = Pipeline::new(config, cli)?;
+    pipeline.run()?;
+    Ok(())
 }
