@@ -7,3 +7,4 @@
 pub mod event_bus;
 pub mod event_processor;
 pub mod pipeline;
+pub mod reporting;

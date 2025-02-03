@@ -2,9 +2,11 @@
 //!
 //! Proprietary and confidential. All rights reserved.
 //!
-//! This module dispatches events to their respective handlers. It integrates alert functionality
-//! via multiple channels (syslog or email), active prevention via iptables, and snapshot generation.
-//! The alert method is configurable via an enum. This design is modular and extensible.
+//! This module dispatches events to their respective handlers. In addition to processing packets,
+//! alerts, prevention actions, and snapshots, it invokes a bug report callback when errors occur.
+//!
+//! The bug report callback is defined via the `BugReporter` trait. Any closure matching the signature
+//! `Fn(usize, &str, &str) + Send + Sync` can be used.
 
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
@@ -21,16 +23,31 @@ use vakthund_detection::analyzer::{analyze_packet, DetectionResult};
 use vakthund_monitor::monitor::Monitor;
 use vakthund_protocol::parser::parse_packet;
 
-/// The EventProcessor dispatches events to appropriate handlers.
+/// The BugReporter trait describes a callback to generate bug reports.
+pub trait BugReporter: Fn(usize, &str, &str) + Send + Sync {}
+impl<T> BugReporter for T where T: Fn(usize, &str, &str) + Send + Sync {}
+
+/// The EventProcessor processes incoming events and dispatches them to appropriate handlers.
+/// If an error occurs (e.g. during packet parsing), it calls the bug report callback (if provided).
 pub struct EventProcessor {
     pub config: Config,
     pub monitor: Arc<Mutex<Monitor>>,
+    /// Optional callback invoked on errors to generate a bug report.
+    pub bug_report_callback: Option<Arc<Box<dyn BugReporter>>>,
 }
 
 impl EventProcessor {
     /// Creates a new EventProcessor.
-    pub fn new(config: Config, monitor: Arc<Mutex<Monitor>>) -> Self {
-        Self { config, monitor }
+    pub fn new(
+        config: Config,
+        monitor: Arc<Mutex<Monitor>>,
+        bug_report_callback: Option<Arc<Box<dyn BugReporter>>>,
+    ) -> Self {
+        Self {
+            config,
+            monitor,
+            bug_report_callback,
+        }
     }
 
     /// Handles a PacketCaptured event.
@@ -63,11 +80,16 @@ impl EventProcessor {
                     "Parsing failed for packet: {}, error: {}",
                     packet_content, e
                 ));
+                if let Some(packet_id) = extract_packet_id(packet_content) {
+                    if let Some(callback) = &self.bug_report_callback {
+                        callback(packet_id, packet_content, &e.to_string());
+                    }
+                }
             }
         }
     }
 
-    /// Handles an AlertRaised event by sending an alert using the configured method.
+    /// Handles an AlertRaised event.
     pub fn handle_alert(&self, details: &str, packet: Packet) {
         log_warn(&format!("ALERT: {}. Packet: {:?}", details, packet));
         if let Err(e) = send_alert(&self.config.alert_methods, details, &packet) {
@@ -75,7 +97,7 @@ impl EventProcessor {
         }
     }
 
-    /// Handles a PreventionAction event by applying a firewall rule.
+    /// Handles a PreventionAction event.
     pub fn handle_prevention(&self, action: &str, packet: Packet) {
         log_info(&format!(
             "Prevention action triggered: {} on packet: {:?}",
@@ -88,7 +110,7 @@ impl EventProcessor {
         }
     }
 
-    /// Handles a SnapshotTaken event by generating a snapshot.
+    /// Handles a SnapshotTaken event.
     pub fn handle_snapshot(&self, snapshot_info: &str) {
         log_info(&format!("Snapshot event: {}", snapshot_info));
         match generate_snapshot(&self.monitor) {
@@ -116,6 +138,7 @@ fn send_alert(
     }
     Ok(())
 }
+
 /// Sends an alert via syslog.
 fn send_syslog_alert(details: &str, packet: &Packet) -> Result<(), Box<dyn Error>> {
     use syslog::{Facility, Formatter3164};
@@ -168,4 +191,16 @@ fn generate_snapshot(monitor: &Arc<Mutex<Monitor>>) -> Result<String, Box<dyn Er
     let mon = monitor.lock().unwrap();
     let snapshot = serde_json::to_string(&*mon)?;
     Ok(snapshot)
+}
+
+/// Helper function to extract packet ID from packet content (expects "ID:<number> " prefix).
+fn extract_packet_id(content: &str) -> Option<usize> {
+    if content.starts_with("ID:") {
+        content
+            .split_whitespace()
+            .next()
+            .and_then(|id_str| id_str.trim_start_matches("ID:").parse().ok())
+    } else {
+        None
+    }
 }

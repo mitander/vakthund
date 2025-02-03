@@ -5,19 +5,14 @@
 //! This module loads configuration, sets up monitoring, and runs the capture system in a unified,
 //! event‑driven architecture. Both live capture (using pcap) and simulation capture push events into
 //! a common event bus. A dedicated worker thread processes events via an EventProcessor, which
-//! dispatches events (PacketCaptured, AlertRaised, PreventionAction, SnapshotTaken) to appropriate handlers.
+//! dispatches events (PacketCaptured, AlertRaised, PreventionAction, SnapshotTaken) to their handlers.
 //!
-//! When an error occurs, a bug report is generated. In simulation mode, the bug report includes an extended
-//! snapshot (monitor state and recent event history) that can later be loaded for replay.
-
-use chrono::Utc;
-use serde_json::json;
+//! When an error occurs during packet processing, the bug report callback is invoked to generate a bug report.
+//! In simulation mode, the bug report includes an extended snapshot (monitor state and recent event history)
+//! that can later be loaded for replay.
 
 use std::collections::VecDeque;
 use std::env;
-use std::fs::{create_dir_all, File};
-use std::io::Write;
-use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -26,106 +21,15 @@ use vakthund_capture::live_capture::live_capture_loop;
 use vakthund_common::config::{CaptureMode, Config, CONFIG_FILE};
 use vakthund_common::logger::{init_logger, log_error, log_info};
 use vakthund_common::packet::Packet;
-use vakthund_monitor::Monitor;
+use vakthund_monitor::monitor::Monitor;
 use vakthund_simulation::run_simulation;
 use vakthund_simulation::storage::InMemoryStorage;
 
 use crate::event_bus::{Event, EventBus};
-use crate::event_processor::EventProcessor;
+use crate::event_processor::{BugReporter, EventProcessor};
+use crate::reporting::{generate_bug_report, load_snapshot};
 
 const RECENT_EVENTS_CAPACITY: usize = 100;
-
-/// Generates an extended snapshot that includes monitor state and recent events.
-fn generate_extended_snapshot(
-    monitor: &Arc<Mutex<Monitor>>,
-    recent_events: &Arc<Mutex<VecDeque<String>>>,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let mon = monitor.lock().unwrap();
-    let monitor_snapshot = serde_json::to_string(&*mon)?;
-    let events = recent_events.lock().unwrap();
-    let events_snapshot: Vec<String> = events.iter().cloned().collect();
-    let extended_snapshot = json!({
-        "monitor": serde_json::from_str::<serde_json::Value>(&monitor_snapshot)?,
-        "recent_events": events_snapshot,
-    });
-    Ok(extended_snapshot.to_string())
-}
-
-/// Generates a bug report as a JSON file in the `bug_reports/` folder.
-/// In simulation mode, it includes an extended snapshot with monitor state and recent events.
-fn generate_bug_report(
-    config: &Config,
-    monitor: &Arc<Mutex<Monitor>>,
-    recent_events: &Arc<Mutex<VecDeque<String>>>,
-    packet_id: usize,
-    packet_content: &str,
-    error: &str,
-) {
-    let bug_folder = "bug_reports";
-    if !Path::new(bug_folder).exists() {
-        create_dir_all(bug_folder).expect("Failed to create bug_reports folder");
-    }
-    let timestamp = Utc::now().to_rfc3339();
-    let snapshot_path = if config.capture.mode == CaptureMode::Simulation {
-        match generate_extended_snapshot(monitor, recent_events) {
-            Ok(snapshot_data) => {
-                let snapshot_file = format!("{}/snapshot_{}.json", bug_folder, timestamp);
-                let mut file =
-                    File::create(&snapshot_file).expect("Failed to create snapshot file");
-                file.write_all(snapshot_data.as_bytes())
-                    .expect("Failed to write snapshot file");
-                Some(snapshot_file)
-            }
-            Err(e) => {
-                log_error(&format!("Failed to generate extended snapshot: {}", e));
-                None
-            }
-        }
-    } else {
-        None
-    };
-    let bug_report = json!({
-        "timestamp": timestamp,
-        "config": config,
-        "seed": config.capture.seed,
-        "packet_id": packet_id,
-        "packet_content": packet_content,
-        "error": error,
-        "snapshot": snapshot_path
-    });
-    let file_name = format!("{}/bug_{}_packet_{}.json", bug_folder, timestamp, packet_id);
-    let mut file = File::create(&file_name).expect("Failed to create bug report file");
-    let report_str =
-        serde_json::to_string_pretty(&bug_report).expect("Failed to serialize bug report");
-    file.write_all(report_str.as_bytes())
-        .expect("Failed to write bug report file");
-    log_error(&format!("Bug report generated: {}", file_name));
-}
-
-/// Extracts the packet ID from packet content (expects "ID:<number> " prefix).
-fn extract_packet_id(content: &str) -> Option<usize> {
-    if content.starts_with("ID:") {
-        content
-            .split_whitespace()
-            .next()
-            .and_then(|id_str| id_str.trim_start_matches("ID:").parse().ok())
-    } else {
-        None
-    }
-}
-
-// Helper function to load a snapshot from a JSON string and update the monitor state.
-// This requires that your Monitor type implements Deserialize.
-fn load_snapshot(
-    monitor: &Arc<Mutex<Monitor>>,
-    snapshot_data: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let new_state = serde_json::from_str(snapshot_data)?;
-    let mut mon = monitor.lock().unwrap();
-    *mon = new_state;
-    log_info("Snapshot loaded and monitor state updated.");
-    Ok(())
-}
 
 pub fn run_vakthund(sim_seed_override: Option<u64>, replay_hash: Option<&str>) {
     init_logger();
@@ -146,20 +50,10 @@ pub fn run_vakthund(sim_seed_override: Option<u64>, replay_hash: Option<&str>) {
         config.capture.seed = Some(seed);
     }
 
-    // If replay_hash is provided, adjust config or internal state accordingly.
-    if let Some(hash) = replay_hash {
-        log_info(&format!("Replaying simulation for hash: {}", hash));
-        // For example, set a replay flag or update config with replay target.
-        // You might need to parse the hash (e.g., extract seed and packet id) and adjust your simulation accordingly.
-        config.capture.mode = CaptureMode::Simulation; // Ensure simulation mode is set.
-                                                       // Additional logic here: e.g., config.replay_target = Some(parsed_target);
-    }
-
-    log_info("Starting Vakthund IDPS pipeline.");
-
+    // Create the monitor (using config from common).
     let monitor = Arc::new(Mutex::new(Monitor::new(&config.monitor)));
 
-    // If the replay_simulation flag is provided, load the snapshot from that file.
+    // If replay_hash is provided, load the snapshot from that file.
     if let Some(snapshot_path) = replay_hash {
         log_info(&format!(
             "Replay simulation flag provided: {}. Loading snapshot...",
@@ -181,6 +75,9 @@ pub fn run_vakthund(sim_seed_override: Option<u64>, replay_hash: Option<&str>) {
             }
         }
     }
+
+    log_info("Starting Vakthund IDPS pipeline.");
+
     // Create a ring buffer to record recent events.
     let recent_events: Arc<Mutex<VecDeque<String>>> =
         Arc::new(Mutex::new(VecDeque::with_capacity(RECENT_EVENTS_CAPACITY)));
@@ -192,8 +89,27 @@ pub fn run_vakthund(sim_seed_override: Option<u64>, replay_hash: Option<&str>) {
     let event_bus = EventBus::new();
     let event_sender = event_bus.get_sender();
 
-    // Create an EventProcessor instance.
-    let event_processor = EventProcessor::new(config.clone(), monitor.clone());
+    // Clone necessary values for the bug report callback.
+    let config_for_bug = config.clone();
+    let monitor_for_bug = monitor.clone();
+    let recent_events_for_bug = recent_events.clone();
+
+    // Create a bug report callback as an Arc<Box<dyn BugReporter>>.
+    let bug_report_cb: Arc<Box<dyn BugReporter>> = Arc::new(Box::new(
+        move |packet_id: usize, packet_content: &str, error: &str| {
+            generate_bug_report(
+                &config_for_bug,
+                &monitor_for_bug,
+                &recent_events_for_bug,
+                packet_id,
+                packet_content,
+                error,
+            );
+        },
+    ));
+
+    // Create an EventProcessor instance with the bug report callback.
+    let event_processor = EventProcessor::new(config.clone(), monitor.clone(), Some(bug_report_cb));
 
     // Spawn a worker thread to process events.
     let recent_events_for_thread = recent_events.clone();
@@ -270,5 +186,17 @@ pub fn run_vakthund(sim_seed_override: Option<u64>, replay_hash: Option<&str>) {
                 "Dummy error triggered bug report",
             );
         }
+    }
+}
+
+/// Extracts the packet ID from packet content (expects content starting with "ID:<number> ").
+fn extract_packet_id(content: &str) -> Option<usize> {
+    if content.starts_with("ID:") {
+        content
+            .split_whitespace()
+            .next()
+            .and_then(|id_str| id_str.trim_start_matches("ID:").parse().ok())
+    } else {
+        None
     }
 }

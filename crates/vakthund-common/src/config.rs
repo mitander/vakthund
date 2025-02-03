@@ -5,6 +5,7 @@
 //! Loads and represents configuration for Vakthund from a YAML file.
 
 use serde::{Deserialize, Serialize};
+
 use std::error::Error;
 use std::fs;
 
