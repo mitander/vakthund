@@ -12,7 +12,6 @@
 //! that can later be loaded for replay.
 
 use std::collections::VecDeque;
-use std::env;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -172,31 +171,4 @@ pub fn run_vakthund(sim_seed_override: Option<u64>, replay_hash: Option<&str>) {
         }
     }
     log_info("Vakthund IDPS pipeline execution complete.");
-
-    // For demonstration: if GENERATE_BUG_REPORT is set, generate a dummy bug report.
-    if env::var("GENERATE_BUG_REPORT").is_ok() {
-        let dummy_packet_content = "ID:999 Dummy error packet";
-        if let Some(packet_id) = extract_packet_id(dummy_packet_content) {
-            generate_bug_report(
-                &config,
-                &monitor,
-                &recent_events,
-                packet_id,
-                dummy_packet_content,
-                "Dummy error triggered bug report",
-            );
-        }
-    }
-}
-
-/// Extracts the packet ID from packet content (expects content starting with "ID:<number> ").
-fn extract_packet_id(content: &str) -> Option<usize> {
-    if content.starts_with("ID:") {
-        content
-            .split_whitespace()
-            .next()
-            .and_then(|id_str| id_str.trim_start_matches("ID:").parse().ok())
-    } else {
-        None
-    }
 }
