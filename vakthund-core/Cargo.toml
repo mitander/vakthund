@@ -1,0 +1,13 @@
+[package]
+name = "vakthund-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bytes = { workspace = true }
+crossbeam = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+proptest = { workspace = true }
+bumpalo = "3.17"
+rand = { version = "0.9.0", features = ["small_rng", "std"] }

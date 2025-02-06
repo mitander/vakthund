@@ -1,31 +1,45 @@
-[package]
-name = "vakthund"
-version = "0.1.0"
-edition = "2021"
-
-[[bin]]
-name = "vakthund"
-path = "src/main.rs"
-
-
 [workspace]
+resolver = "2"
+
 members = [
-    "crates/vakthund-common",
-    "crates/vakthund-capture",
-    "crates/vakthund-protocol",
-    "crates/vakthund-detection",
-    "crates/vakthund-monitor",
-    "crates/vakthund-core",
-    "crates/vakthund-simulation"
+    "vakthund-core",
+    "vakthund-detection",
+    "vakthund-prevention",
+    "vakthund-protocols",
+    "vakthund-telemetry",
+    "vakthund-simulator",
+    # "vakthund-dashboard",
+    "vakthund-cli",
+    "vakthund-capture",
+    # "benches",
+    # "tests/integration",
+    # "tests/scenarios",
+    # "tests/fuzz",
+    # "docs",
 ]
 
-[dependencies]
-vakthund-common = { path = "crates/vakthund-common" }
-vakthund-core   = { path = "crates/vakthund-core" }
-
-clap = "4.5.27"
-
-[dev-dependencies.cargo-husky]
-version = "1"
-default-features = false
-features = ["user-hooks"]
+[workspace.dependencies]
+anyhow = "1.0.95"
+bytes = "1.10.0"
+crossbeam = "0.8.4"
+thiserror = "2.0.11"
+tokio = { version = "1", features = ["full"] }
+hyperscan = "0.3"
+parking_lot = "0.12"
+nom = "8.0.0"
+opentelemetry = "0.27.1" # Placeholder version, may need adjustment
+tracing = "0.1"
+tracing-subscriber = "0.3"
+prometheus = "0.13"
+clap = { version = "4", features = ["derive"] }
+num_cpus = "1.16"
+blake3 = "1.3"
+tracing-test = "0.2"
+proptest = "1.0"
+criterion = "0.5"
+aya-ebpf = "0.1.1"
+aya = "0.13.1"
+bumpalo = "3.17"
+rand = "0.9.0"
+aho-corasick = "1"
+hex = "0.4.3"

@@ -1,0 +1,4097 @@
+<documents>
+<document index="1">
+<source>Cargo.toml</source>
+<document_content>
+[workspace]
+resolver = "2"
+
+members = [
+    "vakthund-core",
+    "vakthund-detection",
+    "vakthund-prevention",
+    "vakthund-protocols",
+    "vakthund-telemetry",
+    "vakthund-simulator",
+    # "vakthund-dashboard",
+    "vakthund-cli",
+    # "benches",
+    # "tests/integration",
+    # "tests/scenarios",
+    # "tests/fuzz",
+    # "docs",
+]
+
+[workspace.dependencies]
+anyhow = "1.0.95"
+bytes = "1.10.0"
+crossbeam = "0.8.4"
+thiserror = "2.0.11"
+tokio = { version = "1", features = ["full"] }
+hyperscan = "0.3"
+parking_lot = "0.12"
+nom = "8.0.0"
+opentelemetry = "0.27.1" # Placeholder version, may need adjustment
+tracing = "0.1"
+tracing-subscriber = "0.3"
+prometheus = "0.13"
+clap = { version = "4", features = ["derive"] }
+num_cpus = "1.16"
+blake3 = "1.3"
+tracing-test = "0.2"
+proptest = "1.0"
+criterion = "0.5"
+aya-ebpf = "0.1.1"
+aya = "0.13.1"
+bumpalo = "3.17"
+rand = "0.9.0"
+aho-corasick = "1"
+hex = "0.4.3"
+</document_content>
+</document>
+<document index="2">
+<source>vakthund-prevention/Cargo.toml</source>
+<document_content>
+[package]
+name = "vakthund-prevention"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+thiserror = { workspace = true }
+
+[features]
+ebpf_firewall = []
+default = ["ebpf_firewall"]
+</document_content>
+</document>
+<document index="3">
+<source>vakthund-prevention/src/lib.rs</source>
+<document_content>
+//! # Vakthund Prevention Modules
+//!
+//! Crate for implementing prevention mechanisms. This crate provides
+//! a no-op implementation when eBPF is not supported.
+
+pub mod firewall;
+// TODO: pub mod quarantine;
+// TODO: pub mod rate_limit;
+
+pub use firewall::Firewall;
+</document_content>
+</document>
+<document index="4">
+<source>vakthund-prevention/src/firewall/mod.rs</source>
+<document_content>
+// vakthund-prevention/src/firewall/mod.rs
+//! ## vakthund-prevention::firewall
+//! **eBPF/XDP-based connection blocking**
+//!
+//! ### Expectations:
+//! - <10µs action triggering latency
+//! - Atomic rule updates without service interruption
+//! - Kernel bypass for packet injection
+//!
+//! ### Modules:
+//! - `firewall/`: eBPF/XDP-based connection blocking
+//! - `rate_limit/`: Token bucket with O(1) updates
+//! - `quarantine/`: Device isolation via ARP poisoning
+//!
+//! ### Future:
+//! - P4-programmable data plane integration
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum FirewallError {
+    #[error("Firewall feature not available on this platform")]
+    NotAvailable,
+}
+
+pub struct Firewall {}
+
+impl Firewall {
+    pub fn new(_interface: &str) -> Result<Self, FirewallError> {
+        Ok(Self {})
+    }
+
+    pub fn ip_block(&mut self, _addr: std::net::Ipv4Addr) -> Result<(), FirewallError> {
+        // No-op implementation
+        Ok(())
+    }
+
+    pub fn ip_is_blocked(&self, _addr: std::net::Ipv4Addr) -> bool {
+        // No-op implementation
+        false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_firewall_init() {
+        // This test will always pass now, as the Firewall::new function
+        // always returns Ok.  More sophisticated tests would be needed
+        // if a real implementation was present.
+        let interface = "eth0";
+        if let Ok(_fw) = Firewall::new(interface) {
+            assert!(true);
+        } else {
+            assert!(false);
+        }
+    }
+}
+</document_content>
+</document>
+<document index="5">
+<source>dummy.vscenario</source>
+<document_content>
+</document_content>
+</document>
+<document index="6">
+<source>LICENSE</source>
+<document_content>
+Vakthund IDPS Proprietary License
+
+Copyright (c) 2025 Kapsel Security
+
+This software and associated documentation ("Software") are confidential and proprietary to Kapsel Security.
+No part of the Software may be used, reproduced, modified, or distributed without prior written consent of Company.
+Reverse engineering, decompilation, or disassembly of the Software is strictly prohibited.
+The Software is provided "AS IS" without any warranties, express or implied.
+
+All rights reserved.
+</document_content>
+</document>
+<document index="7">
+<source>config/production.config</source>
+<document_content>
+[network]
+mode = "xdp"
+interface = "en0"
+
+[simulation]
+enabled = false
+
+[telemetry]
+prometheus_port = 9090
+</document_content>
+</document>
+<document index="8">
+<source>vakthund-cli/Cargo.toml</source>
+<document_content>
+[package]
+name = "vakthund-cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { workspace = true }
+figment = "0.10.19"
+vakthund-core = { path = "../vakthund-core" }
+vakthund-telemetry = { path = "../vakthund-telemetry" }
+vakthund-detection = { path = "../vakthund-detection" }
+vakthund-protocols = { path = "../vakthund-protocols" }
+vakthund-prevention = { path = "../vakthund-prevention" }
+vakthund-simulator = { path = "../vakthund-simulator/" }
+vakthund-capture = { path = "../vakthund-capture/" }
+tokio = { workspace = true }
+tracing = { workspace = true }
+num_cpus = { workspace = true }
+blake3 = { workspace = true }
+hex = { workspace = true }
+proptest = { workspace = true }
+</document_content>
+</document>
+<document index="9">
+<source>vakthund-cli/src/main.rs</source>
+<document_content>
+//! ## vakthund-cli
+//! **Unified operational interface**
+//! Vakthund main entrypoint with deterministic simulation engine
+//! and live (pcap-based) capture mode.
+//!
+//! ### Expectations:
+//! - POSIX-compliant argument parsing
+//! - Configuration templating
+//! - Audit logging for all commands
+//!
+//! ### Future:
+//! - Plugin system for custom commands
+//! - SSH-based remote administration
+
+use clap::{Parser, Subcommand};
+use std::path::PathBuf;
+use std::sync::{
+    atomic::{AtomicBool, Ordering as AtomicOrdering},
+    Arc,
+};
+use vakthund_telemetry::logging::EventLogger;
+use vakthund_telemetry::metrics::MetricsRecorder;
+
+// Import the live capture function from vakthund-capture
+use vakthund_capture::live_capture::live_capture_loop;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    EventLogger::init();
+    let metrics = MetricsRecorder::new();
+
+    #[derive(Parser)]
+    #[command(version, about)]
+    struct Cli {
+        #[command(subcommand)]
+        command: Commands,
+    }
+
+    #[derive(Subcommand)]
+    enum Commands {
+        /// Run in production mode (live capture using pcap)
+        Run {
+            #[arg(short, long)]
+            interface: String,
+        },
+        /// Run deterministic simulation (using a scenario file)
+        Simulate {
+            #[arg(short, long)]
+            scenario: PathBuf,
+            /// Number of events to simulate
+            #[arg(long, default_value_t = 10)]
+            events: usize,
+            #[arg(long, default_value_t = 0)]
+            seed: u64,
+            #[arg(long)]
+            validate_hash: Option<String>,
+        },
+    }
+
+    let cli = Cli::parse();
+
+    match cli.command {
+        Commands::Run { interface } => run_production_mode(&interface, metrics).await,
+        Commands::Simulate {
+            scenario,
+            events,
+            seed,
+            validate_hash,
+        } => run_simulation(scenario, seed, validate_hash, metrics, events).await,
+    }
+}
+
+/// Production mode that uses live capture via pcap.
+/// It sets up a termination flag and calls live_capture_loop.
+/// Each captured packet is processed to increment metrics.
+async fn run_production_mode(
+    interface: &str,
+    metrics: MetricsRecorder,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Define capture parameters. These might eventually come from a config file.
+    let buffer_size = 1_048_576; // 1 MB
+    let promiscuous = true;
+    let terminate = Arc::new(AtomicBool::new(false));
+
+    println!("Starting live capture on interface: {}", interface);
+
+    // Call live_capture_loop from vakthund-capture.
+    // The callback is called for every captured packet.
+    live_capture_loop(
+        interface,
+        buffer_size,
+        promiscuous,
+        &terminate,
+        &mut |packet| {
+            // Update metrics for each packet captured.
+            metrics.processed_events.inc();
+            println!("Captured packet with {} bytes", packet.data.len());
+            // Here you could add further processing (e.g. parsing, detection, etc.)
+        },
+    );
+
+    Ok(())
+}
+
+/// Simulation mode: run the simulator for a given number of events
+async fn run_simulation(
+    _scenario_path: PathBuf, // currently not used in our stub
+    seed: u64,
+    validate_hash: Option<String>,
+    _metrics: MetricsRecorder, // metrics could be used for telemetry within simulation
+    events: usize,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // For demonstration, use the simulator from vakthund-simulator.
+    let mut simulator = vakthund_simulator::Simulator::new(seed, false);
+    let final_hash = simulator.run(events);
+    println!("Simulation complete. State hash: {}", final_hash);
+    if let Some(expected) = validate_hash {
+        assert_eq!(final_hash, expected, "State hash mismatch!");
+    }
+    Ok(())
+}
+</document_content>
+</document>
+<document index="10">
+<source>config.yaml</source>
+<document_content>
+capture:
+  mode: "simulation"         # Allowed values: "live" or "simulation"
+  interface: "en0"
+  buffer_size: 1048576
+  promiscuous: true
+  seed: 42
+
+monitor:
+  quarantine_timeout: 600
+  thresholds:
+    packet_rate: 1000.0
+    data_volume: 10485760.0
+    port_entropy: 2.5
+  whitelist:
+    - "192.168.1.1"
+
+alert_methods:
+  - syslog
+</document_content>
+</document>
+<document index="11">
+<source>README.md</source>
+<document_content>
+# Vakthund IDPS 🐶
+
+**Vakthund** is a deterministic Intrusion Detection and Prevention System (IDPS) built for IoT products. The project is organized as a multi‑crate workspace that emphasizes clear module boundaries, zero‑copy data processing, and reproducible simulation for testing and debugging.
+
+---
+
+## Overview
+
+The project is split into several crates:
+
+- **vakthund-common:**
+  Shared types and utilities (configuration, errors, logging, packets, and simulation logging).
+
+- **vakthund-capture:**
+  Provides a unified capture interface (currently, simulation capture is implemented).
+
+- **vakthund-protocol:**
+  Implements protocol parsing (MQTT, COAP, etc.) using enums to avoid magic strings.
+
+- **vakthund-detection:**
+  Contains threat detection and analysis logic.
+
+- **vakthund-monitor:**
+  Monitors network traffic, applies quarantine, and enforces traffic thresholds.
+
+- **vakthund-core:**
+  Integrates all components into the main IDPS pipeline.
+
+- **vakthund-simulation:**
+  Contains the deterministic simulation engine and storage for simulation events, isolated from production code for reproducible testing.
+
+---
+
+## Build Instructions
+
+To build the entire workspace, run:
+
+```bash
+cargo build --workspace
+```
+
+To run the Vakthund application (typically provided by the vakthund-core binary), use:
+
+```bash
+sudo ./target/debug/vakthund
+```
+
+## Simulation Mode
+
+When running in simulation mode (as specified in the configuration), Vakthund uses a deterministic simulation engine that generates network packet events based on a fixed seed. This ensures that the same sequence of events is produced every time, enabling reproducible testing and debugging.
+How It Works
+
+- Deterministic Events:
+    A seeded RNG generates events, each assigned an event ID and a computed SHA‑256 hash for traceability.
+
+- Bug Injection:
+    A bug is intentionally injected at event ID 3 (by generating a malformed packet).
+
+- Structured Logging:
+    JSON‑formatted logs are written to simulation_logs/simulation_<seed>.log with contextual metadata (seed, event ID, timestamp, etc.).
+
+- Reproducibility:
+    Running the simulation with the same seed (for example, 42) produces an identical event sequence. If a parsing error occurs, a bug report is generated in the bug_reports/ folder with details necessary for replay.
+
+<div style="background-color: #E7F3FE; border-left: 4px solid #2196F3; padding: 8px; margin: 8px 0;">
+  <strong>Note:</strong> To reproduce a bug, use the same seed as in the bug report. The bug report includes the event ID (e.g., event ID 3) and all necessary metadata to replay that event.
+</div>
+
+## Reproducing Bugs
+
+When a packet fails to parse (e.g., due to the injected bug), a bug report is automatically generated in the bug_reports/ folder. Each bug report contains:
+
+- Timestamp
+- Configuration and simulation seed
+- Event ID and packet content
+- Error message
+
+## To replay a bug:
+
+Note the seed and event ID from the bug report.
+Set the replay target in your configuration (or via a command‑line override) to that event ID.
+Re-run the simulation. The engine will stop at the specified event, enabling you to debug the issue deterministically.
+
+<div style="background-color: #FFCDD2; border-left: 4px solid #F44336; padding: 8px; margin: 8px 0;">
+  <strong>Warning:</strong> Always run the simulation with the same seed as noted in the bug report to ensure deterministic replay.
+</div>
+</document_content>
+</document>
+<document index="12">
+<source>vakthund-api/Cargo.toml</source>
+<document_content>
+[package]
+name = "vakthund-api"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { workspace = true }
+</document_content>
+</document>
+<document index="13">
+<source>vakthund-api/src/lib.rs</source>
+<document_content>
+//! # Vakthund API Services
+//!
+//! Crate for defining and implementing API interfaces (gRPC, REST).
+
+pub mod grpc;
+pub mod rest;
+pub mod schema;
+
+// Example re-export if needed
+// pub use grpc::ApiService;
+</document_content>
+</document>
+<document index="14">
+<source>vakthund-core/Cargo.toml</source>
+<document_content>
+[package]
+name = "vakthund-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bytes = { workspace = true }
+crossbeam = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+proptest = { workspace = true }
+bumpalo = "3.17"
+rand = { version = "0.9.0", features = ["small_rng", "std"] }
+</document_content>
+</document>
+<document index="15">
+<source>vakthund-core/src/alloc/mod.rs</source>
+<document_content>
+//! ## vakthund-core::alloc
+//! **Memory pools and arena allocators using `bumpalo`**
+//!
+//! ### Expectations (Production):
+//! - Zero heap allocations in packet processing paths
+//! - High-performance memory allocation/deallocation
+//! - Memory safety and deterministic behavior
+//!
+//! ### Key Submodules:
+//! - `pool/`: Fixed-size memory pools for common data structures
+//! - `arena/`: Arena allocators using `bumpalo` for larger, temporary allocations
+//! - `stats/`: Memory usage tracking and statistics
+//!
+//! ### Future:
+//! - ARM-optimized memory allocators
+//! - Integration with hardware memory management units (MMUs)
+
+pub mod arena;
+pub mod pool;
+pub mod stats;
+</document_content>
+</document>
+<document index="16">
+<source>vakthund-core/src/alloc/arena/mod.rs</source>
+<document_content>
+//! ## vakthund-core::alloc::arena
+//! **Arena allocators using `bumpalo`**
+//!
+//! This module provides arena-based memory allocation using the `bumpalo` crate.
+//! Arena allocators are efficient for allocating many objects with a limited lifetime,
+//! where you can deallocate the entire arena at once.
+
+use bumpalo::Bump;
+
+/// An arena allocator based on `bumpalo::Bump`.
+pub struct ArenaAllocator {
+    bump_allocator: Bump,
+}
+
+impl ArenaAllocator {
+    /// Creates a new arena allocator.
+    pub fn new() -> Self {
+        ArenaAllocator {
+            bump_allocator: Bump::new(),
+        }
+    }
+
+    /// Allocates memory in the arena and returns a mutable reference to it.
+    pub fn allocate<T>(&self, value: T) -> &mut T {
+        self.bump_allocator.alloc(value)
+    }
+
+    /// Allocates memory for a value of type `T` but does not initialize it.
+    /// Returns a mutable pointer to the uninitialized memory.
+    pub fn allocate_uninit<T>(&self) -> *mut T {
+        let ptr = self
+            .bump_allocator
+            .alloc_layout(std::alloc::Layout::new::<T>());
+        ptr.as_ptr() as *mut T
+    }
+    /// Resets the arena, deallocating all allocations made within it.
+    /// This is a very fast way to deallocate all memory in the arena at once.
+    pub fn reset(&mut self) {
+        self.bump_allocator.reset();
+    }
+
+    // You could add methods for more advanced arena operations if needed,
+    // like custom allocation sizes, etc.
+}
+
+impl Default for ArenaAllocator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_arena_allocator_allocate() {
+        let arena = ArenaAllocator::new();
+        let value1 = arena.allocate(123u32);
+        let value2 = arena.allocate(456u64);
+
+        assert_eq!(*value1, 123);
+        assert_eq!(*value2, 456);
+    }
+
+    #[test]
+    fn test_arena_allocator_allocate_uninit() {
+        let arena = ArenaAllocator::new();
+        let ptr = arena.allocate_uninit::<u32>();
+        // Safety: We are initializing the memory we just allocated.
+        unsafe {
+            *ptr = 789;
+            assert_eq!(*ptr, 789);
+        }
+    }
+
+    #[test]
+    fn test_arena_allocator_reset() {
+        let mut arena = ArenaAllocator::new();
+        let value1 = arena.allocate(111u32);
+        arena.allocate(222u32);
+        arena.reset();
+        let value3 = arena.allocate(333u32); // Allocate after reset
+
+        assert_eq!(*value1, 111); // Value 1 is still accessible (memory not overwritten, just arena reset)
+        assert_eq!(*value3, 333); // New allocation works after reset
+    }
+}
+</document_content>
+</document>
+<document index="17">
+<source>vakthund-core/src/alloc/pool/mod.rs</source>
+<document_content>
+//! ## vakthund-core::alloc::pool
+//! **Fixed-size memory pools**
+//!
+//! This module implements fixed-size memory pools for efficient allocation
+//! and deallocation of objects of the same size.
+use std::mem::MaybeUninit;
+use std::ptr;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
+
+pub struct MemoryPool<T> {
+    chunk_size: usize,
+    chunks: Mutex<Vec<Box<[MaybeUninit<T>]>>>,
+    free_indices: Mutex<Vec<usize>>,
+    allocated_count: AtomicUsize,
+    capacity: usize,
+}
+
+impl<T> MemoryPool<T> {
+    pub fn new(chunk_size: usize, capacity: usize) -> Self {
+        assert!(chunk_size > 0, "Chunk size must be greater than zero");
+        assert!(capacity > 0, "Capacity must be greater than zero");
+
+        let num_chunks = (capacity + chunk_size - 1) / chunk_size;
+        let mut chunks = Vec::with_capacity(num_chunks);
+        let mut free_indices = Vec::with_capacity(capacity);
+
+        for _ in 0..num_chunks {
+            let mut vec = Vec::with_capacity(chunk_size);
+            vec.resize_with(chunk_size, || MaybeUninit::uninit());
+            chunks.push(vec.into_boxed_slice());
+        }
+
+        for i in 0..capacity {
+            free_indices.push(i);
+        }
+
+        Self {
+            chunk_size,
+            chunks: Mutex::new(chunks),
+            free_indices: Mutex::new(free_indices),
+            allocated_count: AtomicUsize::new(0),
+            capacity,
+        }
+    }
+
+    /// Allocates an object from the memory pool.
+    /// Returns `None` if the pool is full.
+    pub fn allocate(&self) -> Option<PoolPtr<T>> {
+        let mut free_indices_lock = self.free_indices.lock().unwrap();
+        if let Some(index) = free_indices_lock.pop() {
+            self.allocated_count.fetch_add(1, Ordering::Relaxed);
+            Some(PoolPtr::new(self, index))
+        } else {
+            None // Pool is full
+        }
+    }
+
+    /// Deallocates an object back to the memory pool.
+    ///
+    /// # Safety
+    ///
+    /// The `PoolPtr` must be valid and associated with this `MemoryPool`.
+    pub unsafe fn deallocate(&self, ptr: PoolPtr<T>) {
+        let index = ptr.index;
+        let mut free_indices_lock = self.free_indices.lock().unwrap();
+        free_indices_lock.push(index);
+        self.allocated_count.fetch_sub(1, Ordering::Relaxed);
+    }
+
+    /// Returns the current number of allocated objects in the pool.
+    pub fn allocated_count(&self) -> usize {
+        self.allocated_count.load(Ordering::Relaxed)
+    }
+
+    /// Returns the total capacity of the memory pool.
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    /// Returns the chunk size used by the memory pool.
+    pub fn chunk_size(&self) -> usize {
+        self.chunk_size
+    }
+
+    // Helper function to get a mutable reference to the memory location for a given index
+    #[inline]
+    fn get_memory_location_mut(&self, index: usize) -> *mut T {
+        let chunk_index = index / self.chunk_size;
+        let offset_in_chunk = index % self.chunk_size;
+        let mut chunks_lock = self.chunks.lock().unwrap();
+        let chunk = &mut chunks_lock[chunk_index];
+        chunk[offset_in_chunk].as_mut_ptr() as *mut T // Cast MaybeUninit<T>* to T*
+    }
+}
+
+/// A pointer to an object allocated from a `MemoryPool`.
+pub struct PoolPtr<'pool, T> {
+    pool: &'pool MemoryPool<T>,
+    index: usize,
+    _phantom: std::marker::PhantomData<T>, // For variance and drop check
+}
+
+impl<'pool, T> PoolPtr<'pool, T> {
+    #[inline]
+    fn new(pool: &'pool MemoryPool<T>, index: usize) -> Self {
+        Self {
+            pool,
+            index,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+
+    /// Returns a mutable reference to the allocated object.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that there are no other mutable references to the same object
+    /// alive at the same time to prevent data races.
+    #[inline]
+    pub unsafe fn as_mut_ptr(&self) -> *mut T {
+        self.pool.get_memory_location_mut(self.index)
+    }
+
+    /// Initializes the memory location pointed to by this `PoolPtr` with the given value.
+    ///
+    /// # Safety
+    ///
+    /// The memory location must be valid and uninitialized.
+    #[inline]
+    pub unsafe fn write(&self, value: T) {
+        ptr::write(self.as_mut_ptr(), value);
+    }
+
+    /// Reads the value from the memory location pointed to by this `PoolPtr`.
+    ///
+    /// # Safety
+    ///
+    /// The memory location must be initialized and contain a valid value of type `T`.
+    #[inline]
+    pub unsafe fn read(&self) -> T {
+        ptr::read(self.as_mut_ptr())
+    }
+}
+
+impl<'pool, T> Drop for PoolPtr<'pool, T> {
+    fn drop(&mut self) {
+        // Deallocate back to the pool when PoolPtr goes out of scope
+        // Safety: PoolPtr is always created from a valid MemoryPool and index.
+        unsafe { self.pool.deallocate(PoolPtr::new(self.pool, self.index)) };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_memory_pool_allocate_deallocate() {
+        let pool: MemoryPool<u32> = MemoryPool::new(10, 20);
+        assert_eq!(pool.allocated_count(), 0);
+        assert_eq!(pool.capacity(), 20);
+        assert_eq!(pool.chunk_size(), 10);
+
+        let ptr1 = pool.allocate().unwrap();
+        assert_eq!(pool.allocated_count(), 1);
+
+        let ptr2 = pool.allocate().unwrap();
+        assert_eq!(pool.allocated_count(), 2);
+
+        // Write and read values (unsafe block for demonstration)
+        unsafe {
+            ptr1.write(123);
+            ptr2.write(456);
+            assert_eq!(ptr1.read(), 123);
+            assert_eq!(ptr2.read(), 456);
+        }
+
+        drop(ptr1); // Deallocate ptr1
+        assert_eq!(pool.allocated_count(), 1);
+
+        drop(ptr2); // Deallocate ptr2
+        assert_eq!(pool.allocated_count(), 0);
+    }
+
+    #[test]
+    fn test_memory_pool_capacity() {
+        let pool: MemoryPool<u32> = MemoryPool::new(5, 10);
+        for _ in 0..10 {
+            pool.allocate().unwrap();
+        }
+        assert_eq!(pool.allocated_count(), 10);
+        assert!(pool.allocate().is_none()); // Pool is full
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_memory_pool_zero_chunk_size() {
+        MemoryPool::<u32>::new(0, 10);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_memory_pool_zero_capacity() {
+        MemoryPool::<u32>::new(10, 0);
+    }
+}
+</document_content>
+</document>
+<document index="18">
+<source>vakthund-core/src/alloc/stats/mod.rs</source>
+<document_content>
+//! ## vakthund-core::alloc::stats
+//! **Memory allocation statistics and tracking**
+//!
+//! This module provides functionality for tracking and reporting
+//! memory allocation statistics within Vakthund's allocation system.
+
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// Global memory statistics tracker.
+///
+/// This struct uses atomic operations for thread-safe statistics tracking.
+pub struct MemoryStats {
+    pool_allocations: AtomicUsize,
+    pool_deallocations: AtomicUsize,
+    arena_allocations: AtomicUsize,
+    arena_resets: AtomicUsize,
+    // Add more stats as needed (e.g., bytes allocated, peak usage, etc.)
+}
+
+impl MemoryStats {
+    /// Creates a new `MemoryStats` instance with all counters initialized to zero.
+    pub fn new() -> Self {
+        MemoryStats {
+            pool_allocations: AtomicUsize::new(0),
+            pool_deallocations: AtomicUsize::new(0),
+            arena_allocations: AtomicUsize::new(0),
+            arena_resets: AtomicUsize::new(0),
+        }
+    }
+
+    /// Increments the count of memory pool allocations.
+    #[inline]
+    pub fn increment_pool_allocations(&self) {
+        self.pool_allocations.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Increments the count of memory pool deallocations.
+    #[inline]
+    pub fn increment_pool_deallocations(&self) {
+        self.pool_deallocations.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Increments the count of arena allocations.
+    #[inline]
+    pub fn increment_arena_allocations(&self) {
+        self.arena_allocations.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Increments the count of arena resets.
+    #[inline]
+    pub fn increment_arena_resets(&self) {
+        self.arena_resets.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Returns the current count of memory pool allocations.
+    pub fn pool_allocations(&self) -> usize {
+        self.pool_allocations.load(Ordering::Relaxed)
+    }
+
+    /// Returns the current count of memory pool deallocations.
+    pub fn pool_deallocations(&self) -> usize {
+        self.pool_deallocations.load(Ordering::Relaxed)
+    }
+
+    /// Returns the current count of arena allocations.
+    pub fn arena_allocations(&self) -> usize {
+        self.arena_allocations.load(Ordering::Relaxed)
+    }
+
+    /// Returns the current count of arena resets.
+    pub fn arena_resets(&self) -> usize {
+        self.arena_resets.load(Ordering::Relaxed)
+    }
+
+    // You can add methods to calculate derived stats or format output here.
+}
+
+impl Default for MemoryStats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// You might consider using a global static instance of `MemoryStats`
+// or passing it around as a dependency where needed.
+//
+// Example (using a static, be mindful of initialization order if using statics):
+//
+// ```
+// static GLOBAL_MEMORY_STATS: MemoryStats = MemoryStats::new();
+// ```
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_memory_stats_increment_and_read() {
+        let stats = MemoryStats::new();
+        assert_eq!(stats.pool_allocations(), 0);
+        assert_eq!(stats.arena_allocations(), 0);
+
+        stats.increment_pool_allocations();
+        stats.increment_arena_allocations();
+
+        assert_eq!(stats.pool_allocations(), 1);
+        assert_eq!(stats.arena_allocations(), 1);
+    }
+
+    #[test]
+    fn test_memory_stats_multiple_increments() {
+        let stats = MemoryStats::new();
+        for _ in 0..100 {
+            stats.increment_pool_allocations();
+            stats.increment_arena_allocations();
+            stats.increment_pool_deallocations();
+            stats.increment_arena_resets();
+        }
+
+        assert_eq!(stats.pool_allocations(), 100);
+        assert_eq!(stats.arena_allocations(), 100);
+        assert_eq!(stats.pool_deallocations(), 100);
+        assert_eq!(stats.arena_resets(), 100);
+    }
+}
+</document_content>
+</document>
+<document index="19">
+<source>vakthund-core/src/lib.rs</source>
+<document_content>
+//! # vakthund-core
+//!
+//! Foundation layer for event processing and resource management.
+//! Built with safety, performance, and maintainability as primary design constraints.
+//! # Vakthund IDPS Core Platform
+//!
+//! A deterministic-first intrusion detection/prevention system for IoT networks.
+//! Built with safety, performance, and maintainability as primary design constraints.
+//!
+//! ### Expectations (Production):
+//! - <2ms startup time for embedded deployments
+//! - Zero heap allocations in packet processing paths
+//! - Lock-free synchronization primitives
+//!
+//! ### Key Submodules:
+//! - `alloc/`: Memory pools and arena allocators using `bumpalo`
+//! - `events/`: Tokio-powered event bus with MPSC ringbuffer
+//! - `sim/`: Deterministic simulation core with virtual clock
+//! - `network/`: Network condition models (latency/jitter/packet loss)
+//! - `time/`: `VirtualClock` using atomic counters + scheduler
+//!
+//! ### Future:
+//! - ARM-optimized memory allocators
+//! - Hardware timestamping support
+
+pub mod alloc;
+pub mod events;
+pub mod network;
+pub mod sim;
+pub mod time;
+
+pub mod prelude {
+    pub use crate::alloc::*;
+    pub use crate::events::*;
+    pub use crate::network::*;
+    pub use crate::sim::*;
+    pub use crate::time::*;
+}
+</document_content>
+</document>
+<document index="20">
+<source>vakthund-core/src/network/latency/mod.rs</source>
+<document_content>
+//! ## vakthund-core::network::latency
+//! **Latency models for network simulation**
+//!
+//! This module provides different models for simulating network latency.
+//!
+//! ### Available Models:
+//! - Fixed Latency: Constant latency value.
+//! - Variable Latency: Latency that varies based on a pattern or distribution.
+//! - Distribution-Based Latency: Latency sampled from a statistical distribution.
+//!
+//! ### Future:
+//! - Support for custom latency distributions.
+//! - Integration with real-world latency measurements.
+
+use std::time::Duration;
+
+/// Trait for latency models.
+pub trait LatencyModel: Send + Sync {
+    /// Applies the latency model to a given duration.
+    fn apply_latency(&self, duration: Duration) -> Duration;
+}
+
+/// Fixed latency model.
+#[derive(Debug, Clone, Copy)]
+pub struct FixedLatencyModel {
+    latency: Duration,
+}
+
+impl FixedLatencyModel {
+    /// Creates a new fixed latency model.
+    pub fn new(latency_ms: u64) -> Self {
+        Self {
+            latency: Duration::from_millis(latency_ms),
+        }
+    }
+}
+
+impl LatencyModel for FixedLatencyModel {
+    fn apply_latency(&self, duration: Duration) -> Duration {
+        duration + self.latency
+    }
+}
+
+/// No-op latency model (for baseline or no latency simulation).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoLatencyModel;
+
+impl LatencyModel for NoLatencyModel {
+    fn apply_latency(&self, duration: Duration) -> Duration {
+        duration // No latency added
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fixed_latency_model() {
+        let model = FixedLatencyModel::new(100); // 100ms fixed latency
+        let initial_duration = Duration::from_millis(50);
+        let delayed_duration = model.apply_latency(initial_duration);
+        assert_eq!(delayed_duration, Duration::from_millis(150)); // 50 + 100 = 150
+    }
+
+    #[test]
+    fn test_no_latency_model() {
+        let model = NoLatencyModel::default();
+        let initial_duration = Duration::from_millis(50);
+        let delayed_duration = model.apply_latency(initial_duration);
+        assert_eq!(delayed_duration, Duration::from_millis(50)); // No change
+    }
+}
+</document_content>
+</document>
+<document index="21">
+<source>vakthund-core/src/network/mod.rs</source>
+<document_content>
+//! ## vakthund-core::network
+//! **Network condition models (latency/jitter/packet loss)**
+//!
+//! ### Expectations (Production):
+//! - Deterministic and configurable network conditions for simulation
+//! - Low overhead condition application
+//! - Support for various network impairments
+//!
+//! ### Key Submodules:
+//! - `latency/`: Latency models (fixed, variable, distribution-based)
+//! - `jitter/`: Jitter introduction and simulation
+//! - `packet_loss/`: Probabilistic packet loss models
+//!
+//! ### Future:
+//! - Real-world network condition capture and replay
+//! - Integration with network emulation tools (e.g., `netem`)
+
+pub mod jitter;
+pub mod latency;
+pub mod packet_loss;
+</document_content>
+</document>
+<document index="22">
+<source>vakthund-core/src/network/packet_loss/mod.rs</source>
+<document_content>
+//! ## vakthund-core::network::packet_loss
+//! **Packet loss models for network simulation**
+//!
+//! This module implements models for simulating packet loss in network scenarios.
+//!
+//! ### Models:
+//! - Probabilistic Packet Loss: Packets are dropped with a given probability.
+//! - Burst Packet Loss: Simulate bursts of packet loss.
+//! - State-Based Packet Loss: Packet loss based on network state.
+//!
+//! ### Future:
+//! - Advanced packet loss models (e.g., Gilbert-Elliot).
+//! - Packet loss based on simulated network congestion.
+
+use rand::rngs::SmallRng;
+use rand::{Rng, SeedableRng};
+use std::sync::Mutex;
+
+/// Trait for packet loss models.
+pub trait PacketLossModel: Send + Sync {
+    /// Determines if a packet should be dropped based on the model.
+    fn should_drop(&mut self) -> bool;
+}
+
+/// Probabilistic packet loss model.
+#[derive(Debug)]
+pub struct ProbabilisticLossModel {
+    drop_probability: f64, // Probability of packet drop (0.0 to 1.0)
+    rng: Mutex<SmallRng>,  // Use SmallRng for deterministic, thread-safe randomness
+}
+
+impl ProbabilisticLossModel {
+    /// Creates a new probabilistic packet loss model.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `drop_probability` is not within the range [0.0, 1.0].
+    pub fn new(drop_probability: f64) -> Self {
+        assert!(
+            (0.0..=1.0).contains(&drop_probability),
+            "Drop probability must be between 0.0 and 1.0"
+        );
+        Self {
+            drop_probability,
+            // Initialize using from_entropy, which is seedable and does not require a mutable reference.
+            rng: Mutex::new(SmallRng::from_rng(&mut rand::rng())),
+        }
+    }
+}
+
+impl PacketLossModel for ProbabilisticLossModel {
+    fn should_drop(&mut self) -> bool {
+        // Generate a boolean based on drop_probability.
+        self.rng.lock().unwrap().random_bool(self.drop_probability)
+    }
+}
+
+/// No-op packet loss model (no packet loss).
+#[derive(Debug, Default)]
+pub struct NoPacketLossModel;
+
+impl PacketLossModel for NoPacketLossModel {
+    fn should_drop(&mut self) -> bool {
+        false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_probabilistic_loss_model() {
+        let mut model = ProbabilisticLossModel::new(0.5); // 50% drop probability
+        let mut drop_count = 0;
+        let test_iterations = 10_000;
+
+        for _ in 0..test_iterations {
+            if model.should_drop() {
+                drop_count += 1;
+            }
+        }
+
+        let actual_probability = (drop_count as f64) / (test_iterations as f64);
+        // Allow some tolerance (around 0.5 with ±0.05 deviation)
+        assert!((actual_probability - 0.5).abs() < 0.05);
+    }
+
+    #[test]
+    fn test_no_packet_loss_model() {
+        let mut model = NoPacketLossModel::default();
+        for _ in 0..100 {
+            assert_eq!(model.should_drop(), false);
+        }
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_probabilistic_loss_model_invalid_probability() {
+        ProbabilisticLossModel::new(1.5); // Should panic
+    }
+}
+</document_content>
+</document>
+<document index="23">
+<source>vakthund-core/src/network/jitter/mod.rs</source>
+<document_content>
+//! ## vakthund-core::network::jitter
+//! **Jitter simulation for network conditions**
+//!
+//! This module provides mechanisms to introduce jitter (variations in latency)
+//! into network simulations.
+//!
+//! ### Features:
+//! - Jitter based on statistical distributions.
+//! - Configurable jitter magnitude and frequency.
+//! - Realistic jitter patterns.
+//!
+//! ### Future:
+//! - Support for different jitter distribution models.
+//! - Correlation between latency and jitter.
+
+use rand::rngs::SmallRng;
+use rand::{Rng, SeedableRng};
+use std::sync::Mutex;
+use std::time::Duration;
+
+/// Trait for jitter models.
+pub trait JitterModel: Send + Sync {
+    /// Applies jitter to a given duration, returning the jittered duration.
+    fn apply_jitter(&mut self, duration: Duration) -> Duration;
+}
+
+/// A random jitter model using a simple uniform distribution.
+#[derive(Debug)]
+pub struct RandomJitterModel {
+    magnitude_ms: u64,    // Maximum jitter magnitude in milliseconds
+    rng: Mutex<SmallRng>, // Use SmallRng for deterministic, thread-safe randomness
+}
+
+impl RandomJitterModel {
+    /// Creates a new random jitter model.
+    pub fn new(magnitude_ms: u64) -> Self {
+        Self {
+            magnitude_ms,
+            rng: Mutex::new(SmallRng::from_rng(&mut rand::rng())),
+        }
+    }
+}
+
+impl JitterModel for RandomJitterModel {
+    fn apply_jitter(&mut self, duration: Duration) -> Duration {
+        // Use gen_range (allowing deprecated warnings if necessary)
+        #[allow(deprecated)]
+        let jitter_ms = self.rng.lock().unwrap().gen_range(0..=self.magnitude_ms);
+        duration + Duration::from_millis(jitter_ms)
+    }
+}
+
+/// No-op jitter model (no jitter).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoJitterModel;
+
+impl JitterModel for NoJitterModel {
+    fn apply_jitter(&mut self, duration: Duration) -> Duration {
+        duration
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn test_random_jitter_model() {
+        let mut model = RandomJitterModel::new(50); // Max 50ms jitter
+        let initial_duration = Duration::from_millis(100);
+        let jittered_duration = model.apply_jitter(initial_duration);
+
+        // The jittered duration should be at least the original duration...
+        assert!(jittered_duration >= initial_duration);
+        // ... and at most initial + 50ms.
+        assert!(jittered_duration <= initial_duration + Duration::from_millis(50));
+    }
+
+    #[test]
+    fn test_no_jitter_model() {
+        let mut model = NoJitterModel::default();
+        let initial_duration = Duration::from_millis(100);
+        let jittered_duration = model.apply_jitter(initial_duration);
+        assert_eq!(jittered_duration, initial_duration);
+    }
+}
+</document_content>
+</document>
+<document index="24">
+<source>vakthund-core/src/time/mod.rs</source>
+<document_content>
+//! ## vakthund-core::time
+//! **Virtual clocks & scheduler**
+//!
+//! ### Expectations (Production):
+//! - <2ms startup time for embedded deployments
+//! - Zero heap allocations in packet processing paths
+//! - Lock-free synchronization primitives
+//!
+//! ### Key Submodules:
+//! - `alloc/`: Memory pools and arena allocators using `bumpalo`
+//! - `events/`: Tokio-powered event bus with MPSC ringbuffer
+//! - `sim/`: Deterministic simulation core with virtual clock
+//! - `network/`: Network condition models (latency/jitter/packet loss)
+//! - `time/`: `VirtualClock` using atomic counters + scheduler
+//!
+//! ### Future:
+//! - ARM-optimized memory allocators
+//! - Hardware timestamping support
+
+// vakthund-core/src/time.rs
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Instant;
+
+#[derive(Clone)]
+pub struct VirtualClock {
+    epoch: std::time::Instant,
+    offset: Arc<AtomicU64>, // Nanoseconds
+}
+
+impl VirtualClock {
+    pub fn new(seed: u64) -> Self {
+        Self {
+            epoch: Instant::now(),
+            offset: Arc::new(AtomicU64::new(seed)),
+        }
+    }
+
+    /// TigerBeetle-style time access
+    pub fn now_ns(&self) -> u64 {
+        self.offset.load(Ordering::Acquire)
+    }
+
+    pub fn advance(&self, ns: u64) {
+        self.offset.fetch_add(ns, Ordering::Release);
+    }
+}
+</document_content>
+</document>
+<document index="25">
+<source>vakthund-core/src/events/mod.rs</source>
+<document_content>
+//! ## vakthund-core::events
+//! **Event bus using crossbeam's segmented queue for lock-free multi-producer handling**
+//!
+//! ### Expectations (Production):
+//! - <2ms startup time for embedded deployments
+//! - Zero heap allocations in packet processing paths
+//! - Lock-free synchronization primitives
+//!
+//! ### Key Submodules:
+//! - `alloc/`: Memory pools and arena allocators using `bumpalo`
+//! - `events/`: Tokio-powered event bus with MPSC ringbuffer
+//! - `sim/`: Deterministic simulation core with virtual clock
+//! - `network/`: Network condition models (latency/jitter/packet loss)
+//! - `time/`: `VirtualClock` using atomic counters + scheduler
+//!
+//! ### Future:
+//! - ARM-optimized memory allocators
+//! - Hardware timestamping support
+use bytes::Bytes;
+use crossbeam::queue::SegQueue;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum EventError {
+    #[error("Event queue capacity exceeded")]
+    QueueFull,
+}
+
+/// Unified event type carrying protocol-agnostic payload
+#[derive(Clone)]
+pub struct NetworkEvent {
+    pub timestamp: u64,
+    pub payload: Bytes,
+}
+
+pub struct EventBus {
+    queue: SegQueue<NetworkEvent>,
+    capacity: usize,
+}
+
+impl EventBus {
+    /// Create new event bus with fixed capacity
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            queue: SegQueue::new(),
+            capacity,
+        }
+    }
+
+    /// Enqueue event using Tigerbeetle-style *_verb naming
+    pub fn event_enqueue(&self, event: NetworkEvent) -> Result<(), EventError> {
+        if self.queue.len() >= self.capacity {
+            return Err(EventError::QueueFull);
+        }
+        self.queue.push(event);
+        Ok(())
+    }
+
+    /// Dequeue event with timeout
+    pub fn event_dequeue(&self) -> Option<NetworkEvent> {
+        self.queue.pop()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::prelude::EventBus;
+    use crate::prelude::NetworkEvent;
+    use bytes::Bytes;
+
+    #[test]
+    fn enqueue_dequeue_roundtrip() {
+        let bus = EventBus::with_capacity(1000);
+        for i in 0..1000 {
+            let event = NetworkEvent {
+                timestamp: i as u64,
+                payload: Bytes::from(vec![i as u8]),
+            };
+            bus.event_enqueue(event).unwrap();
+        }
+
+        for i in 0..1000 {
+            let event = bus.event_dequeue().unwrap();
+            assert_eq!(event.timestamp, i as u64);
+            assert_eq!(event.payload[0], i as u8);
+        }
+    }
+}
+</document_content>
+</document>
+<document index="26">
+<source>vakthund-core/src/sim/mod.rs</source>
+<document_content>
+//! ## vakthund-core::sim
+//! **Deterministic simulation core with virtual clock**
+//!
+//! ### Expectations (Production):
+//! - <2ms startup time for embedded deployments
+//! - Zero heap allocations in packet processing paths
+//! - Lock-free synchronization primitives
+//!
+//! ### Key Submodules:
+//! - `alloc/`: Memory pools and arena allocators using `bumpalo`
+//! - `events/`: Tokio-powered event bus with MPSC ringbuffer
+//! - `sim/`: Deterministic simulation core with virtual clock
+//! - `network/`: Network condition models (latency/jitter/packet loss)
+//! - `time/`: `VirtualClock` using atomic counters + scheduler
+//!
+//! ### Future:
+//! - ARM-optimized memory allocators
+//! - Hardware timestamping support
+
+use crate::events::NetworkEvent;
+use crate::prelude::VirtualClock;
+use std::sync::atomic::{AtomicUsize, Ordering}; // Correctly import atomic Ordering
+use std::sync::Arc;
+
+// TODO: can we avoid clone?
+#[derive(Clone)]
+pub struct ReplayEngine {
+    scenario: Scenario, // Assuming Scenario is defined elsewhere or will be
+    clock: VirtualClock,
+    position: Arc<AtomicUsize>,
+}
+
+// Assuming Scenario struct definition for compilation.
+// In real implementation, Scenario would be properly defined and loaded.
+#[derive(Clone)]
+pub struct Scenario {
+    pub events: Vec<NetworkEventWithDelay>,
+}
+
+#[derive(Clone)]
+pub struct NetworkEventWithDelay {
+    pub event: NetworkEvent,
+    pub delay_ns: u64,
+}
+
+impl ReplayEngine {
+    pub fn new(scenario: Scenario, clock: VirtualClock) -> Self {
+        Self {
+            scenario,
+            clock,
+            position: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    /// Get next event with virtual timing
+    pub async fn next_event(&self) -> Option<NetworkEvent> {
+        let pos = self.position.fetch_add(1, Ordering::Relaxed);
+        let event_with_delay = self.scenario.events.get(pos)?;
+        let event = &event_with_delay.event;
+
+        // Advance clock exactly as recorded
+        self.clock.advance(event_with_delay.delay_ns);
+        Some(event.clone())
+    }
+}
+
+// Long-running simulation harness
+//
+// async fn run_continuous_simulation() {
+//     let scenarios = load_scenarios_from_s3().await;
+//     let mut handles = Vec::new();
+
+//     for scenario in scenarios {
+//         let handle = tokio::spawn(async move {
+//             let hash = run_simulation(scenario.path, scenario.seed, None).await;
+//             store_simulation_result(hash).await;
+//         });
+//         handles.push(handle);
+//     }
+
+//     futures::future::join_all(handles).await;
+// }
+</document_content>
+</document>
+<document index="27">
+<source>vakthund-simulator/Cargo.toml</source>
+<document_content>
+[package]
+name = "vakthund-simulator"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { workspace = true }
+vakthund-core = { path = "../vakthund-core" }
+vakthund-telemetry = { path = "../vakthund-telemetry" }
+tokio = { workspace = true }
+num_cpus = { workspace = true }
+hex = { workspace = true }
+blake3 = { workspace = true }
+vakthund-detection = { path = "../vakthund-detection" }
+vakthund-protocols = { path = "../vakthund-protocols" }
+rand = "0.9.0"
+</document_content>
+</document>
+<document index="28">
+<source>vakthund-simulator/src/chaos.rs</source>
+<document_content>
+//! Chaos module.
+//!
+//! Implements fault injection for simulation. Here we simply modify the event content.
+
+/// Injects a fault into the event by appending a fault string.
+pub fn inject_fault(event: &mut String) {
+    event.push_str(" [FAULT INJECTED]");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_inject_fault() {
+        let mut event = String::from("Test event");
+        inject_fault(&mut event);
+        assert!(event.contains("FAULT INJECTED"));
+    }
+}
+</document_content>
+</document>
+<document index="29">
+<source>vakthund-simulator/src/lib.rs</source>
+<document_content>
+//! # Vakthund Simulator
+//!
+//! Provides a deterministic simulation and replay engine that uses core
+//! components (virtual clock, arena allocators, network condition models)
+//! to process a stream of simulated events. It also supports optional chaos
+//! (fault injection) and replay of recorded scenarios.
+
+use blake3::Hasher;
+use clap::Parser;
+use std::time::Duration;
+
+use vakthund_core::alloc::arena::ArenaAllocator;
+use vakthund_core::network::jitter::{JitterModel, RandomJitterModel};
+use vakthund_core::network::latency::{FixedLatencyModel, LatencyModel};
+use vakthund_core::time::VirtualClock;
+
+use rand::Rng;
+
+pub mod chaos;
+pub mod cli;
+pub mod replay;
+
+/// CLI arguments for simulation.
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+pub struct SimArgs {
+    /// Seed for the simulation
+    #[arg(long)]
+    pub seed: Option<u64>,
+
+    /// Number of events to simulate
+    #[arg(long, default_value_t = 10)]
+    pub events: usize,
+
+    /// Enable chaos fault injection (faults are injected with 10% probability)
+    #[arg(long, default_value_t = false)]
+    pub chaos: bool,
+}
+
+/// The Simulator ties together the virtual clock, memory allocation, network
+/// models, and chaos injection to simulate event processing.
+pub struct Simulator {
+    clock: VirtualClock,
+    allocator: ArenaAllocator,
+    latency_model: FixedLatencyModel,
+    jitter_model: RandomJitterModel,
+    state_hasher: Hasher,
+    chaos_enabled: bool,
+}
+
+impl Simulator {
+    /// Create a new Simulator with a given seed and chaos flag.
+    pub fn new(seed: u64, chaos_enabled: bool) -> Self {
+        Self {
+            clock: VirtualClock::new(seed),
+            allocator: ArenaAllocator::new(),
+            // Create a fixed latency model that adds 100ms per event.
+            latency_model: FixedLatencyModel::new(100),
+            // Create a jitter model that can add up to 10ms jitter.
+            jitter_model: RandomJitterModel::new(10),
+            state_hasher: Hasher::new(),
+            chaos_enabled,
+        }
+    }
+
+    /// Run the simulation for a given number of events. For each event:
+    /// - Allocate an event buffer from the arena (zero‑copy)
+    /// - Simulate network delay via latency + jitter and update the virtual clock
+    /// - Optionally inject a fault via the chaos module
+    /// - Update a state hasher (using blake3) for reproducibility
+    ///
+    /// Returns the final state hash.
+    pub fn run(&mut self, event_count: usize) -> String {
+        for event_id in 0..event_count {
+            // Allocate an event using the arena allocator.
+            // (Here we simulate an event as a String; in a real system this might be a packet buffer.)
+            let event_content = format!("Event {}", event_id);
+            let event_ref = self.allocator.allocate(event_content);
+
+            // Simulate network delay.
+            let base_delay_ns = 100_000_000; // 100ms in nanoseconds
+            let base_delay = Duration::from_nanos(base_delay_ns);
+            let delay = self.latency_model.apply_latency(base_delay);
+            let jitter = self.jitter_model.apply_jitter(Duration::from_nanos(0));
+            let total_delay = delay + jitter;
+            self.clock.advance(total_delay.as_nanos() as u64);
+
+            // Optionally inject a fault into the event.
+            if self.chaos_enabled && rand::thread_rng().random_bool(0.1) {
+                crate::chaos::inject_fault(event_ref);
+            }
+
+            // Update the state hasher using the event content.
+            self.state_hasher.update(event_ref.as_bytes());
+        }
+        hex::encode(self.state_hasher.finalize().as_bytes())
+    }
+}
+
+/// Public entry point to run the simulation.
+/// This function parses CLI arguments and runs the simulation engine.
+pub fn simulate() {
+    let args = SimArgs::parse();
+    let seed = args.seed.unwrap_or(42);
+    let mut simulator = Simulator::new(seed, args.chaos);
+    let state_hash = simulator.run(args.events);
+    println!("Simulation complete. State hash: {}", state_hash);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_simulator_runs() {
+        let mut simulator = Simulator::new(42, true);
+        let hash = simulator.run(5);
+        assert!(!hash.is_empty());
+    }
+}
+</document_content>
+</document>
+<document index="30">
+<source>vakthund-simulator/src/cli.rs</source>
+<document_content>
+//! CLI module for the simulator.
+
+use clap::Parser;
+
+/// Command‑line arguments for the Vakthund Simulator.
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+pub struct SimulatorCli {
+    /// Seed for the simulation
+    #[arg(long)]
+    pub seed: Option<u64>,
+
+    /// Number of events to simulate
+    #[arg(long, default_value_t = 10)]
+    pub events: usize,
+
+    /// Enable chaos fault injection
+    #[arg(long, default_value_t = false)]
+    pub chaos: bool,
+
+    /// Path to a scenario file for replay (optional)
+    #[arg(long)]
+    pub replay: Option<String>,
+}
+
+pub fn parse_args() -> SimulatorCli {
+    SimulatorCli::parse()
+}
+</document_content>
+</document>
+<document index="31">
+<source>vakthund-simulator/src/replay.rs</source>
+<document_content>
+//! Replay module.
+//!
+//! Provides functionality to replay a recorded scenario. In a real system the
+//! scenario would be parsed and played back deterministically using the same virtual clock,
+//! but here we provide a stub implementation.
+
+use super::Simulator;
+
+/// Replays a scenario from a given file path with the specified seed.
+/// For demonstration, this stub simply runs the simulator with a fixed number of events.
+pub fn replay_scenario(scenario_path: &str, seed: u64) {
+    // In a full implementation, you would parse the scenario file here.
+    println!("Replaying scenario '{}' with seed {}", scenario_path, seed);
+    let mut simulator = Simulator::new(seed, false);
+    // For this stub, we run 10 events.
+    let state_hash = simulator.run(10);
+    println!("Replay complete. State hash: {}", state_hash);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_replay_stub() {
+        replay_scenario("dummy_scenario.vscenario", 42);
+    }
+}
+</document_content>
+</document>
+<document index="32">
+<source>copied_files.txt</source>
+<document_content>
+<documents>
+<document index="1">
+<source>Cargo.toml</source>
+<document_content>
+[workspace]
+resolver = "2"
+
+members = [
+    "vakthund-core",
+    "vakthund-detection",
+    "vakthund-prevention",
+    "vakthund-protocols",
+    "vakthund-telemetry",
+    "vakthund-simulator",
+    # "vakthund-dashboard",
+    "vakthund-cli",
+    # "benches",
+    # "tests/integration",
+    # "tests/scenarios",
+    # "tests/fuzz",
+    # "docs",
+]
+
+[workspace.dependencies]
+anyhow = "1.0.95"
+bytes = "1.10.0"
+crossbeam = "0.8.4"
+thiserror = "2.0.11"
+tokio = { version = "1", features = ["full"] }
+hyperscan = "0.3"
+parking_lot = "0.12"
+nom = "8.0.0"
+opentelemetry = "0.27.1" # Placeholder version, may need adjustment
+tracing = "0.1"
+tracing-subscriber = "0.3"
+prometheus = "0.13"
+clap = { version = "4", features = ["derive"] }
+num_cpus = "1.16"
+blake3 = "1.3"
+tracing-test = "0.2"
+proptest = "1.0"
+criterion = "0.5"
+aya-ebpf = "0.1.1"
+aya = "0.13.1"
+bumpalo = "3.17"
+rand = "0.9.0"
+aho-corasick = "1"
+hex = "0.4.3"
+</document_content>
+</document>
+<document index="2">
+<source>vakthund-prevention/Cargo.toml</source>
+<document_content>
+[package]
+name = "vakthund-prevention"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+thiserror = { workspace = true }
+
+[features]
+ebpf_firewall = []
+default = ["ebpf_firewall"]
+</document_content>
+</document>
+<document index="3">
+<source>vakthund-prevention/src/lib.rs</source>
+<document_content>
+//! # Vakthund Prevention Modules
+//!
+//! Crate for implementing prevention mechanisms. This crate provides
+//! a no-op implementation when eBPF is not supported.
+
+pub mod firewall;
+// TODO: pub mod quarantine;
+// TODO: pub mod rate_limit;
+
+pub use firewall::Firewall;
+</document_content>
+</document>
+<document index="4">
+<source>vakthund-prevention/src/firewall/mod.rs</source>
+<document_content>
+// vakthund-prevention/src/firewall/mod.rs
+//! ## vakthund-prevention::firewall
+//! **eBPF/XDP-based connection blocking**
+//!
+//! ### Expectations:
+//! - <10µs action triggering latency
+//! - Atomic rule updates without service interruption
+//! - Kernel bypass for packet injection
+//!
+//! ### Modules:
+//! - `firewall/`: eBPF/XDP-based connection blocking
+//! - `rate_limit/`: Token bucket with O(1) updates
+//! - `quarantine/`: Device isolation via ARP poisoning
+//!
+//! ### Future:
+//! - P4-programmable data plane integration
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum FirewallError {
+    #[error("Firewall feature not available on this platform")]
+    NotAvailable,
+}
+
+pub struct Firewall {}
+
+impl Firewall {
+    pub fn new(_interface: &str) -> Result<Self, FirewallError> {
+        Ok(Self {})
+    }
+
+    pub fn ip_block(&mut self, _addr: std::net::Ipv4Addr) -> Result<(), FirewallError> {
+        // No-op implementation
+        Ok(())
+    }
+
+    pub fn ip_is_blocked(&self, _addr: std::net::Ipv4Addr) -> bool {
+        // No-op implementation
+        false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_firewall_init() {
+        // This test will always pass now, as the Firewall::new function
+        // always returns Ok.  More sophisticated tests would be needed
+        // if a real implementation was present.
+        let interface = "eth0";
+        if let Ok(_fw) = Firewall::new(interface) {
+            assert!(true);
+        } else {
+            assert!(false);
+        }
+    }
+}
+</document_content>
+</document>
+<document index="5">
+<source>dummy.vscenario</source>
+<document_content>
+</document_content>
+</document>
+<document index="6">
+<source>LICENSE</source>
+<document_content>
+Vakthund IDPS Proprietary License
+
+Copyright (c) 2025 Kapsel Security
+
+This software and associated documentation ("Software") are confidential and proprietary to Kapsel Security.
+No part of the Software may be used, reproduced, modified, or distributed without prior written consent of Company.
+Reverse engineering, decompilation, or disassembly of the Software is strictly prohibited.
+The Software is provided "AS IS" without any warranties, express or implied.
+
+All rights reserved.
+</document_content>
+</document>
+<document index="7">
+<source>config/production.config</source>
+<document_content>
+[network]
+mode = "xdp"
+interface = "en0"
+
+[simulation]
+enabled = false
+
+[telemetry]
+prometheus_port = 9090
+</document_content>
+</document>
+<document index="8">
+<source>vakthund-cli/Cargo.toml</source>
+<document_content>
+[package]
+name = "vakthund-cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { workspace = true }
+figment = "0.10.19"
+vakthund-core = { path = "../vakthund-core" }
+vakthund-telemetry = { path = "../vakthund-telemetry" }
+vakthund-detection = { path = "../vakthund-detection" }
+vakthund-protocols = { path = "../vakthund-protocols" }
+vakthund-prevention = { path = "../vakthund-prevention" }
+vakthund-simulator = { path = "../vakthund-simulator/" }
+vakthund-capture = { path = "../vakthund-capture/" }
+tokio = { workspace = true }
+tracing = { workspace = true }
+num_cpus = { workspace = true }
+blake3 = { workspace = true }
+hex = { workspace = true }
+proptest = { workspace = true }
+</document_content>
+</document>
+<document index="9">
+<source>vakthund-cli/src/main.rs</source>
+<document_content>
+//! ## vakthund-cli
+//! **Unified operational interface**
+//! Vakthund main entrypoint with deterministic simulation engine
+//! and live (pcap-based) capture mode.
+//!
+//! ### Expectations:
+//! - POSIX-compliant argument parsing
+//! - Configuration templating
+//! - Audit logging for all commands
+//!
+//! ### Future:
+//! - Plugin system for custom commands
+//! - SSH-based remote administration
+
+use clap::{Parser, Subcommand};
+use std::path::PathBuf;
+use std::sync::{
+    atomic::{AtomicBool, Ordering as AtomicOrdering},
+    Arc,
+};
+use vakthund_telemetry::logging::EventLogger;
+use vakthund_telemetry::metrics::MetricsRecorder;
+
+// Import the live capture function from vakthund-capture
+use vakthund_capture::live_capture::live_capture_loop;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    EventLogger::init();
+    let metrics = MetricsRecorder::new();
+
+    #[derive(Parser)]
+    #[command(version, about)]
+    struct Cli {
+        #[command(subcommand)]
+        command: Commands,
+    }
+
+    #[derive(Subcommand)]
+    enum Commands {
+        /// Run in production mode (live capture using pcap)
+        Run {
+            #[arg(short, long)]
+            interface: String,
+        },
+        /// Run deterministic simulation (using a scenario file)
+        Simulate {
+            #[arg(short, long)]
+            scenario: PathBuf,
+            /// Number of events to simulate
+            #[arg(long, default_value_t = 10)]
+            events: usize,
+            #[arg(long, default_value_t = 0)]
+            seed: u64,
+            #[arg(long)]
+            validate_hash: Option<String>,
+        },
+    }
+
+    let cli = Cli::parse();
+
+    match cli.command {
+        Commands::Run { interface } => run_production_mode(&interface, metrics).await,
+        Commands::Simulate {
+            scenario,
+            events,
+            seed,
+            validate_hash,
+        } => run_simulation(scenario, seed, validate_hash, metrics, events).await,
+    }
+}
+
+/// Production mode that uses live capture via pcap.
+/// It sets up a termination flag and calls live_capture_loop.
+/// Each captured packet is processed to increment metrics.
+async fn run_production_mode(
+    interface: &str,
+    metrics: MetricsRecorder,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Define capture parameters. These might eventually come from a config file.
+    let buffer_size = 1_048_576; // 1 MB
+    let promiscuous = true;
+    let terminate = Arc::new(AtomicBool::new(false));
+
+    println!("Starting live capture on interface: {}", interface);
+
+    // Call live_capture_loop from vakthund-capture.
+    // The callback is called for every captured packet.
+    live_capture_loop(
+        interface,
+        buffer_size,
+        promiscuous,
+        &terminate,
+        &mut |packet| {
+            // Update metrics for each packet captured.
+            metrics.processed_events.inc();
+            println!("Captured packet with {} bytes", packet.data.len());
+            // Here you could add further processing (e.g. parsing, detection, etc.)
+        },
+    );
+
+    Ok(())
+}
+
+/// Simulation mode: run the simulator for a given number of events
+async fn run_simulation(
+    _scenario_path: PathBuf, // currently not used in our stub
+    seed: u64,
+    validate_hash: Option<String>,
+    _metrics: MetricsRecorder, // metrics could be used for telemetry within simulation
+    events: usize,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // For demonstration, use the simulator from vakthund-simulator.
+    let mut simulator = vakthund_simulator::Simulator::new(seed, false);
+    let final_hash = simulator.run(events);
+    println!("Simulation complete. State hash: {}", final_hash);
+    if let Some(expected) = validate_hash {
+        assert_eq!(final_hash, expected, "State hash mismatch!");
+    }
+    Ok(())
+}
+</document_content>
+</document>
+<document index="10">
+<source>config.yaml</source>
+<document_content>
+capture:
+  mode: "simulation"         # Allowed values: "live" or "simulation"
+  interface: "en0"
+  buffer_size: 1048576
+  promiscuous: true
+  seed: 42
+
+monitor:
+  quarantine_timeout: 600
+  thresholds:
+    packet_rate: 1000.0
+    data_volume: 10485760.0
+    port_entropy: 2.5
+  whitelist:
+    - "192.168.1.1"
+
+alert_methods:
+  - syslog
+</document_content>
+</document>
+<document index="11">
+<source>README.md</source>
+<document_content>
+# Vakthund IDPS 🐶
+
+**Vakthund** is a deterministic Intrusion Detection and Prevention System (IDPS) built for IoT products. The project is organized as a multi‑crate workspace that emphasizes clear module boundaries, zero‑copy data processing, and reproducible simulation for testing and debugging.
+
+---
+
+## Overview
+
+The project is split into several crates:
+
+- **vakthund-common:**
+  Shared types and utilities (configuration, errors, logging, packets, and simulation logging).
+
+- **vakthund-capture:**
+  Provides a unified capture interface (currently, simulation capture is implemented).
+
+- **vakthund-protocol:**
+  Implements protocol parsing (MQTT, COAP, etc.) using enums to avoid magic strings.
+
+- **vakthund-detection:**
+  Contains threat detection and analysis logic.
+
+- **vakthund-monitor:**
+  Monitors network traffic, applies quarantine, and enforces traffic thresholds.
+
+- **vakthund-core:**
+  Integrates all components into the main IDPS pipeline.
+
+- **vakthund-simulation:**
+  Contains the deterministic simulation engine and storage for simulation events, isolated from production code for reproducible testing.
+
+---
+
+## Build Instructions
+
+To build the entire workspace, run:
+
+```bash
+cargo build --workspace
+```
+
+To run the Vakthund application (typically provided by the vakthund-core binary), use:
+
+```bash
+sudo ./target/debug/vakthund
+```
+
+## Simulation Mode
+
+When running in simulation mode (as specified in the configuration), Vakthund uses a deterministic simulation engine that generates network packet events based on a fixed seed. This ensures that the same sequence of events is produced every time, enabling reproducible testing and debugging.
+How It Works
+
+- Deterministic Events:
+    A seeded RNG generates events, each assigned an event ID and a computed SHA‑256 hash for traceability.
+
+- Bug Injection:
+    A bug is intentionally injected at event ID 3 (by generating a malformed packet).
+
+- Structured Logging:
+    JSON‑formatted logs are written to simulation_logs/simulation_<seed>.log with contextual metadata (seed, event ID, timestamp, etc.).
+
+- Reproducibility:
+    Running the simulation with the same seed (for example, 42) produces an identical event sequence. If a parsing error occurs, a bug report is generated in the bug_reports/ folder with details necessary for replay.
+
+<div style="background-color: #E7F3FE; border-left: 4px solid #2196F3; padding: 8px; margin: 8px 0;">
+  <strong>Note:</strong> To reproduce a bug, use the same seed as in the bug report. The bug report includes the event ID (e.g., event ID 3) and all necessary metadata to replay that event.
+</div>
+
+## Reproducing Bugs
+
+When a packet fails to parse (e.g., due to the injected bug), a bug report is automatically generated in the bug_reports/ folder. Each bug report contains:
+
+- Timestamp
+- Configuration and simulation seed
+- Event ID and packet content
+- Error message
+
+## To replay a bug:
+
+Note the seed and event ID from the bug report.
+Set the replay target in your configuration (or via a command‑line override) to that event ID.
+Re-run the simulation. The engine will stop at the specified event, enabling you to debug the issue deterministically.
+
+<div style="background-color: #FFCDD2; border-left: 4px solid #F44336; padding: 8px; margin: 8px 0;">
+  <strong>Warning:</strong> Always run the simulation with the same seed as noted in the bug report to ensure deterministic replay.
+</div>
+</document_content>
+</document>
+<document index="12">
+<source>vakthund-api/Cargo.toml</source>
+<document_content>
+[package]
+name = "vakthund-api"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { workspace = true }
+</document_content>
+</document>
+<document index="13">
+<source>vakthund-api/src/lib.rs</source>
+<document_content>
+//! # Vakthund API Services
+//!
+//! Crate for defining and implementing API interfaces (gRPC, REST).
+
+pub mod grpc;
+pub mod rest;
+pub mod schema;
+
+// Example re-export if needed
+// pub use grpc::ApiService;
+</document_content>
+</document>
+<document index="14">
+<source>vakthund-core/Cargo.toml</source>
+<document_content>
+[package]
+name = "vakthund-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bytes = { workspace = true }
+crossbeam = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+proptest = { workspace = true }
+bumpalo = "3.17"
+rand = { version = "0.9.0", features = ["small_rng", "std"] }
+</document_content>
+</document>
+<document index="15">
+<source>vakthund-core/src/alloc/mod.rs</source>
+<document_content>
+//! ## vakthund-core::alloc
+//! **Memory pools and arena allocators using `bumpalo`**
+//!
+//! ### Expectations (Production):
+//! - Zero heap allocations in packet processing paths
+//! - High-performance memory allocation/deallocation
+//! - Memory safety and deterministic behavior
+//!
+//! ### Key Submodules:
+//! - `pool/`: Fixed-size memory pools for common data structures
+//! - `arena/`: Arena allocators using `bumpalo` for larger, temporary allocations
+//! - `stats/`: Memory usage tracking and statistics
+//!
+//! ### Future:
+//! - ARM-optimized memory allocators
+//! - Integration with hardware memory management units (MMUs)
+
+pub mod arena;
+pub mod pool;
+pub mod stats;
+</document_content>
+</document>
+<document index="16">
+<source>vakthund-core/src/alloc/arena/mod.rs</source>
+<document_content>
+//! ## vakthund-core::alloc::arena
+//! **Arena allocators using `bumpalo`**
+//!
+//! This module provides arena-based memory allocation using the `bumpalo` crate.
+//! Arena allocators are efficient for allocating many objects with a limited lifetime,
+//! where you can deallocate the entire arena at once.
+
+use bumpalo::Bump;
+
+/// An arena allocator based on `bumpalo::Bump`.
+pub struct ArenaAllocator {
+    bump_allocator: Bump,
+}
+
+impl ArenaAllocator {
+    /// Creates a new arena allocator.
+    pub fn new() -> Self {
+        ArenaAllocator {
+            bump_allocator: Bump::new(),
+        }
+    }
+
+    /// Allocates memory in the arena and returns a mutable reference to it.
+    pub fn allocate<T>(&self, value: T) -> &mut T {
+        self.bump_allocator.alloc(value)
+    }
+
+    /// Allocates memory for a value of type `T` but does not initialize it.
+    /// Returns a mutable pointer to the uninitialized memory.
+    pub fn allocate_uninit<T>(&self) -> *mut T {
+        let ptr = self
+            .bump_allocator
+            .alloc_layout(std::alloc::Layout::new::<T>());
+        ptr.as_ptr() as *mut T
+    }
+    /// Resets the arena, deallocating all allocations made within it.
+    /// This is a very fast way to deallocate all memory in the arena at once.
+    pub fn reset(&mut self) {
+        self.bump_allocator.reset();
+    }
+
+    // You could add methods for more advanced arena operations if needed,
+    // like custom allocation sizes, etc.
+}
+
+impl Default for ArenaAllocator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_arena_allocator_allocate() {
+        let arena = ArenaAllocator::new();
+        let value1 = arena.allocate(123u32);
+        let value2 = arena.allocate(456u64);
+
+        assert_eq!(*value1, 123);
+        assert_eq!(*value2, 456);
+    }
+
+    #[test]
+    fn test_arena_allocator_allocate_uninit() {
+        let arena = ArenaAllocator::new();
+        let ptr = arena.allocate_uninit::<u32>();
+        // Safety: We are initializing the memory we just allocated.
+        unsafe {
+            *ptr = 789;
+            assert_eq!(*ptr, 789);
+        }
+    }
+
+    #[test]
+    fn test_arena_allocator_reset() {
+        let mut arena = ArenaAllocator::new();
+        let value1 = arena.allocate(111u32);
+        arena.allocate(222u32);
+        arena.reset();
+        let value3 = arena.allocate(333u32); // Allocate after reset
+
+        assert_eq!(*value1, 111); // Value 1 is still accessible (memory not overwritten, just arena reset)
+        assert_eq!(*value3, 333); // New allocation works after reset
+    }
+}
+</document_content>
+</document>
+<document index="17">
+<source>vakthund-core/src/alloc/pool/mod.rs</source>
+<document_content>
+//! ## vakthund-core::alloc::pool
+//! **Fixed-size memory pools**
+//!
+//! This module implements fixed-size memory pools for efficient allocation
+//! and deallocation of objects of the same size.
+use std::mem::MaybeUninit;
+use std::ptr;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
+
+pub struct MemoryPool<T> {
+    chunk_size: usize,
+    chunks: Mutex<Vec<Box<[MaybeUninit<T>]>>>,
+    free_indices: Mutex<Vec<usize>>,
+    allocated_count: AtomicUsize,
+    capacity: usize,
+}
+
+impl<T> MemoryPool<T> {
+    pub fn new(chunk_size: usize, capacity: usize) -> Self {
+        assert!(chunk_size > 0, "Chunk size must be greater than zero");
+        assert!(capacity > 0, "Capacity must be greater than zero");
+
+        let num_chunks = (capacity + chunk_size - 1) / chunk_size;
+        let mut chunks = Vec::with_capacity(num_chunks);
+        let mut free_indices = Vec::with_capacity(capacity);
+
+        for _ in 0..num_chunks {
+            let mut vec = Vec::with_capacity(chunk_size);
+            vec.resize_with(chunk_size, || MaybeUninit::uninit());
+            chunks.push(vec.into_boxed_slice());
+        }
+
+        for i in 0..capacity {
+            free_indices.push(i);
+        }
+
+        Self {
+            chunk_size,
+            chunks: Mutex::new(chunks),
+            free_indices: Mutex::new(free_indices),
+            allocated_count: AtomicUsize::new(0),
+            capacity,
+        }
+    }
+
+    /// Allocates an object from the memory pool.
+    /// Returns `None` if the pool is full.
+    pub fn allocate(&self) -> Option<PoolPtr<T>> {
+        let mut free_indices_lock = self.free_indices.lock().unwrap();
+        if let Some(index) = free_indices_lock.pop() {
+            self.allocated_count.fetch_add(1, Ordering::Relaxed);
+            Some(PoolPtr::new(self, index))
+        } else {
+            None // Pool is full
+        }
+    }
+
+    /// Deallocates an object back to the memory pool.
+    ///
+    /// # Safety
+    ///
+    /// The `PoolPtr` must be valid and associated with this `MemoryPool`.
+    pub unsafe fn deallocate(&self, ptr: PoolPtr<T>) {
+        let index = ptr.index;
+        let mut free_indices_lock = self.free_indices.lock().unwrap();
+        free_indices_lock.push(index);
+        self.allocated_count.fetch_sub(1, Ordering::Relaxed);
+    }
+
+    /// Returns the current number of allocated objects in the pool.
+    pub fn allocated_count(&self) -> usize {
+        self.allocated_count.load(Ordering::Relaxed)
+    }
+
+    /// Returns the total capacity of the memory pool.
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    /// Returns the chunk size used by the memory pool.
+    pub fn chunk_size(&self) -> usize {
+        self.chunk_size
+    }
+
+    // Helper function to get a mutable reference to the memory location for a given index
+    #[inline]
+    fn get_memory_location_mut(&self, index: usize) -> *mut T {
+        let chunk_index = index / self.chunk_size;
+        let offset_in_chunk = index % self.chunk_size;
+        let mut chunks_lock = self.chunks.lock().unwrap();
+        let chunk = &mut chunks_lock[chunk_index];
+        chunk[offset_in_chunk].as_mut_ptr() as *mut T // Cast MaybeUninit<T>* to T*
+    }
+}
+
+/// A pointer to an object allocated from a `MemoryPool`.
+pub struct PoolPtr<'pool, T> {
+    pool: &'pool MemoryPool<T>,
+    index: usize,
+    _phantom: std::marker::PhantomData<T>, // For variance and drop check
+}
+
+impl<'pool, T> PoolPtr<'pool, T> {
+    #[inline]
+    fn new(pool: &'pool MemoryPool<T>, index: usize) -> Self {
+        Self {
+            pool,
+            index,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+
+    /// Returns a mutable reference to the allocated object.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that there are no other mutable references to the same object
+    /// alive at the same time to prevent data races.
+    #[inline]
+    pub unsafe fn as_mut_ptr(&self) -> *mut T {
+        self.pool.get_memory_location_mut(self.index)
+    }
+
+    /// Initializes the memory location pointed to by this `PoolPtr` with the given value.
+    ///
+    /// # Safety
+    ///
+    /// The memory location must be valid and uninitialized.
+    #[inline]
+    pub unsafe fn write(&self, value: T) {
+        ptr::write(self.as_mut_ptr(), value);
+    }
+
+    /// Reads the value from the memory location pointed to by this `PoolPtr`.
+    ///
+    /// # Safety
+    ///
+    /// The memory location must be initialized and contain a valid value of type `T`.
+    #[inline]
+    pub unsafe fn read(&self) -> T {
+        ptr::read(self.as_mut_ptr())
+    }
+}
+
+impl<'pool, T> Drop for PoolPtr<'pool, T> {
+    fn drop(&mut self) {
+        // Deallocate back to the pool when PoolPtr goes out of scope
+        // Safety: PoolPtr is always created from a valid MemoryPool and index.
+        unsafe { self.pool.deallocate(PoolPtr::new(self.pool, self.index)) };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_memory_pool_allocate_deallocate() {
+        let pool: MemoryPool<u32> = MemoryPool::new(10, 20);
+        assert_eq!(pool.allocated_count(), 0);
+        assert_eq!(pool.capacity(), 20);
+        assert_eq!(pool.chunk_size(), 10);
+
+        let ptr1 = pool.allocate().unwrap();
+        assert_eq!(pool.allocated_count(), 1);
+
+        let ptr2 = pool.allocate().unwrap();
+        assert_eq!(pool.allocated_count(), 2);
+
+        // Write and read values (unsafe block for demonstration)
+        unsafe {
+            ptr1.write(123);
+            ptr2.write(456);
+            assert_eq!(ptr1.read(), 123);
+            assert_eq!(ptr2.read(), 456);
+        }
+
+        drop(ptr1); // Deallocate ptr1
+        assert_eq!(pool.allocated_count(), 1);
+
+        drop(ptr2); // Deallocate ptr2
+        assert_eq!(pool.allocated_count(), 0);
+    }
+
+    #[test]
+    fn test_memory_pool_capacity() {
+        let pool: MemoryPool<u32> = MemoryPool::new(5, 10);
+        for _ in 0..10 {
+            pool.allocate().unwrap();
+        }
+        assert_eq!(pool.allocated_count(), 10);
+        assert!(pool.allocate().is_none()); // Pool is full
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_memory_pool_zero_chunk_size() {
+        MemoryPool::<u32>::new(0, 10);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_memory_pool_zero_capacity() {
+        MemoryPool::<u32>::new(10, 0);
+    }
+}
+</document_content>
+</document>
+<document index="18">
+<source>vakthund-core/src/alloc/stats/mod.rs</source>
+<document_content>
+//! ## vakthund-core::alloc::stats
+//! **Memory allocation statistics and tracking**
+//!
+//! This module provides functionality for tracking and reporting
+//! memory allocation statistics within Vakthund's allocation system.
+
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// Global memory statistics tracker.
+///
+/// This struct uses atomic operations for thread-safe statistics tracking.
+pub struct MemoryStats {
+    pool_allocations: AtomicUsize,
+    pool_deallocations: AtomicUsize,
+    arena_allocations: AtomicUsize,
+    arena_resets: AtomicUsize,
+    // Add more stats as needed (e.g., bytes allocated, peak usage, etc.)
+}
+
+impl MemoryStats {
+    /// Creates a new `MemoryStats` instance with all counters initialized to zero.
+    pub fn new() -> Self {
+        MemoryStats {
+            pool_allocations: AtomicUsize::new(0),
+            pool_deallocations: AtomicUsize::new(0),
+            arena_allocations: AtomicUsize::new(0),
+            arena_resets: AtomicUsize::new(0),
+        }
+    }
+
+    /// Increments the count of memory pool allocations.
+    #[inline]
+    pub fn increment_pool_allocations(&self) {
+        self.pool_allocations.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Increments the count of memory pool deallocations.
+    #[inline]
+    pub fn increment_pool_deallocations(&self) {
+        self.pool_deallocations.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Increments the count of arena allocations.
+    #[inline]
+    pub fn increment_arena_allocations(&self) {
+        self.arena_allocations.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Increments the count of arena resets.
+    #[inline]
+    pub fn increment_arena_resets(&self) {
+        self.arena_resets.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Returns the current count of memory pool allocations.
+    pub fn pool_allocations(&self) -> usize {
+        self.pool_allocations.load(Ordering::Relaxed)
+    }
+
+    /// Returns the current count of memory pool deallocations.
+    pub fn pool_deallocations(&self) -> usize {
+        self.pool_deallocations.load(Ordering::Relaxed)
+    }
+
+    /// Returns the current count of arena allocations.
+    pub fn arena_allocations(&self) -> usize {
+        self.arena_allocations.load(Ordering::Relaxed)
+    }
+
+    /// Returns the current count of arena resets.
+    pub fn arena_resets(&self) -> usize {
+        self.arena_resets.load(Ordering::Relaxed)
+    }
+
+    // You can add methods to calculate derived stats or format output here.
+}
+
+impl Default for MemoryStats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// You might consider using a global static instance of `MemoryStats`
+// or passing it around as a dependency where needed.
+//
+// Example (using a static, be mindful of initialization order if using statics):
+//
+// ```
+// static GLOBAL_MEMORY_STATS: MemoryStats = MemoryStats::new();
+// ```
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_memory_stats_increment_and_read() {
+        let stats = MemoryStats::new();
+        assert_eq!(stats.pool_allocations(), 0);
+        assert_eq!(stats.arena_allocations(), 0);
+
+        stats.increment_pool_allocations();
+        stats.increment_arena_allocations();
+
+        assert_eq!(stats.pool_allocations(), 1);
+        assert_eq!(stats.arena_allocations(), 1);
+    }
+
+    #[test]
+    fn test_memory_stats_multiple_increments() {
+        let stats = MemoryStats::new();
+        for _ in 0..100 {
+            stats.increment_pool_allocations();
+            stats.increment_arena_allocations();
+            stats.increment_pool_deallocations();
+            stats.increment_arena_resets();
+        }
+
+        assert_eq!(stats.pool_allocations(), 100);
+        assert_eq!(stats.arena_allocations(), 100);
+        assert_eq!(stats.pool_deallocations(), 100);
+        assert_eq!(stats.arena_resets(), 100);
+    }
+}
+</document_content>
+</document>
+<document index="19">
+<source>vakthund-core/src/lib.rs</source>
+<document_content>
+//! # vakthund-core
+//!
+//! Foundation layer for event processing and resource management.
+//! Built with safety, performance, and maintainability as primary design constraints.
+//! # Vakthund IDPS Core Platform
+//!
+//! A deterministic-first intrusion detection/prevention system for IoT networks.
+//! Built with safety, performance, and maintainability as primary design constraints.
+//!
+//! ### Expectations (Production):
+//! - <2ms startup time for embedded deployments
+//! - Zero heap allocations in packet processing paths
+//! - Lock-free synchronization primitives
+//!
+//! ### Key Submodules:
+//! - `alloc/`: Memory pools and arena allocators using `bumpalo`
+//! - `events/`: Tokio-powered event bus with MPSC ringbuffer
+//! - `sim/`: Deterministic simulation core with virtual clock
+//! - `network/`: Network condition models (latency/jitter/packet loss)
+//! - `time/`: `VirtualClock` using atomic counters + scheduler
+//!
+//! ### Future:
+//! - ARM-optimized memory allocators
+//! - Hardware timestamping support
+
+pub mod alloc;
+pub mod events;
+pub mod network;
+pub mod sim;
+pub mod time;
+
+pub mod prelude {
+    pub use crate::alloc::*;
+    pub use crate::events::*;
+    pub use crate::network::*;
+    pub use crate::sim::*;
+    pub use crate::time::*;
+}
+</document_content>
+</document>
+<document index="20">
+<source>vakthund-core/src/network/latency/mod.rs</source>
+<document_content>
+//! ## vakthund-core::network::latency
+//! **Latency models for network simulation**
+//!
+//! This module provides different models for simulating network latency.
+//!
+//! ### Available Models:
+//! - Fixed Latency: Constant latency value.
+//! - Variable Latency: Latency that varies based on a pattern or distribution.
+//! - Distribution-Based Latency: Latency sampled from a statistical distribution.
+//!
+//! ### Future:
+//! - Support for custom latency distributions.
+//! - Integration with real-world latency measurements.
+
+use std::time::Duration;
+
+/// Trait for latency models.
+pub trait LatencyModel: Send + Sync {
+    /// Applies the latency model to a given duration.
+    fn apply_latency(&self, duration: Duration) -> Duration;
+}
+
+/// Fixed latency model.
+#[derive(Debug, Clone, Copy)]
+pub struct FixedLatencyModel {
+    latency: Duration,
+}
+
+impl FixedLatencyModel {
+    /// Creates a new fixed latency model.
+    pub fn new(latency_ms: u64) -> Self {
+        Self {
+            latency: Duration::from_millis(latency_ms),
+        }
+    }
+}
+
+impl LatencyModel for FixedLatencyModel {
+    fn apply_latency(&self, duration: Duration) -> Duration {
+        duration + self.latency
+    }
+}
+
+/// No-op latency model (for baseline or no latency simulation).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoLatencyModel;
+
+impl LatencyModel for NoLatencyModel {
+    fn apply_latency(&self, duration: Duration) -> Duration {
+        duration // No latency added
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fixed_latency_model() {
+        let model = FixedLatencyModel::new(100); // 100ms fixed latency
+        let initial_duration = Duration::from_millis(50);
+        let delayed_duration = model.apply_latency(initial_duration);
+        assert_eq!(delayed_duration, Duration::from_millis(150)); // 50 + 100 = 150
+    }
+
+    #[test]
+    fn test_no_latency_model() {
+        let model = NoLatencyModel::default();
+        let initial_duration = Duration::from_millis(50);
+        let delayed_duration = model.apply_latency(initial_duration);
+        assert_eq!(delayed_duration, Duration::from_millis(50)); // No change
+    }
+}
+</document_content>
+</document>
+<document index="21">
+<source>vakthund-core/src/network/mod.rs</source>
+<document_content>
+//! ## vakthund-core::network
+//! **Network condition models (latency/jitter/packet loss)**
+//!
+//! ### Expectations (Production):
+//! - Deterministic and configurable network conditions for simulation
+//! - Low overhead condition application
+//! - Support for various network impairments
+//!
+//! ### Key Submodules:
+//! - `latency/`: Latency models (fixed, variable, distribution-based)
+//! - `jitter/`: Jitter introduction and simulation
+//! - `packet_loss/`: Probabilistic packet loss models
+//!
+//! ### Future:
+//! - Real-world network condition capture and replay
+//! - Integration with network emulation tools (e.g., `netem`)
+
+pub mod jitter;
+pub mod latency;
+pub mod packet_loss;
+</document_content>
+</document>
+<document index="22">
+<source>vakthund-core/src/network/packet_loss/mod.rs</source>
+<document_content>
+//! ## vakthund-core::network::packet_loss
+//! **Packet loss models for network simulation**
+//!
+//! This module implements models for simulating packet loss in network scenarios.
+//!
+//! ### Models:
+//! - Probabilistic Packet Loss: Packets are dropped with a given probability.
+//! - Burst Packet Loss: Simulate bursts of packet loss.
+//! - State-Based Packet Loss: Packet loss based on network state.
+//!
+//! ### Future:
+//! - Advanced packet loss models (e.g., Gilbert-Elliot).
+//! - Packet loss based on simulated network congestion.
+
+use rand::rngs::SmallRng;
+use rand::{Rng, SeedableRng};
+use std::sync::Mutex;
+
+/// Trait for packet loss models.
+pub trait PacketLossModel: Send + Sync {
+    /// Determines if a packet should be dropped based on the model.
+    fn should_drop(&mut self) -> bool;
+}
+
+/// Probabilistic packet loss model.
+#[derive(Debug)]
+pub struct ProbabilisticLossModel {
+    drop_probability: f64, // Probability of packet drop (0.0 to 1.0)
+    rng: Mutex<SmallRng>,  // Use SmallRng for deterministic, thread-safe randomness
+}
+
+impl ProbabilisticLossModel {
+    /// Creates a new probabilistic packet loss model.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `drop_probability` is not within the range [0.0, 1.0].
+    pub fn new(drop_probability: f64) -> Self {
+        assert!(
+            (0.0..=1.0).contains(&drop_probability),
+            "Drop probability must be between 0.0 and 1.0"
+        );
+        Self {
+            drop_probability,
+            // Initialize using from_entropy, which is seedable and does not require a mutable reference.
+            rng: Mutex::new(SmallRng::from_rng(&mut rand::rng())),
+        }
+    }
+}
+
+impl PacketLossModel for ProbabilisticLossModel {
+    fn should_drop(&mut self) -> bool {
+        // Generate a boolean based on drop_probability.
+        self.rng.lock().unwrap().random_bool(self.drop_probability)
+    }
+}
+
+/// No-op packet loss model (no packet loss).
+#[derive(Debug, Default)]
+pub struct NoPacketLossModel;
+
+impl PacketLossModel for NoPacketLossModel {
+    fn should_drop(&mut self) -> bool {
+        false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_probabilistic_loss_model() {
+        let mut model = ProbabilisticLossModel::new(0.5); // 50% drop probability
+        let mut drop_count = 0;
+        let test_iterations = 10_000;
+
+        for _ in 0..test_iterations {
+            if model.should_drop() {
+                drop_count += 1;
+            }
+        }
+
+        let actual_probability = (drop_count as f64) / (test_iterations as f64);
+        // Allow some tolerance (around 0.5 with ±0.05 deviation)
+        assert!((actual_probability - 0.5).abs() < 0.05);
+    }
+
+    #[test]
+    fn test_no_packet_loss_model() {
+        let mut model = NoPacketLossModel::default();
+        for _ in 0..100 {
+            assert_eq!(model.should_drop(), false);
+        }
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_probabilistic_loss_model_invalid_probability() {
+        ProbabilisticLossModel::new(1.5); // Should panic
+    }
+}
+</document_content>
+</document>
+<document index="23">
+<source>vakthund-core/src/network/jitter/mod.rs</source>
+<document_content>
+//! ## vakthund-core::network::jitter
+//! **Jitter simulation for network conditions**
+//!
+//! This module provides mechanisms to introduce jitter (variations in latency)
+//! into network simulations.
+//!
+//! ### Features:
+//! - Jitter based on statistical distributions.
+//! - Configurable jitter magnitude and frequency.
+//! - Realistic jitter patterns.
+//!
+//! ### Future:
+//! - Support for different jitter distribution models.
+//! - Correlation between latency and jitter.
+
+use rand::rngs::SmallRng;
+use rand::{Rng, SeedableRng};
+use std::sync::Mutex;
+use std::time::Duration;
+
+/// Trait for jitter models.
+pub trait JitterModel: Send + Sync {
+    /// Applies jitter to a given duration, returning the jittered duration.
+    fn apply_jitter(&mut self, duration: Duration) -> Duration;
+}
+
+/// A random jitter model using a simple uniform distribution.
+#[derive(Debug)]
+pub struct RandomJitterModel {
+    magnitude_ms: u64,    // Maximum jitter magnitude in milliseconds
+    rng: Mutex<SmallRng>, // Use SmallRng for deterministic, thread-safe randomness
+}
+
+impl RandomJitterModel {
+    /// Creates a new random jitter model.
+    pub fn new(magnitude_ms: u64) -> Self {
+        Self {
+            magnitude_ms,
+            rng: Mutex::new(SmallRng::from_rng(&mut rand::rng())),
+        }
+    }
+}
+
+impl JitterModel for RandomJitterModel {
+    fn apply_jitter(&mut self, duration: Duration) -> Duration {
+        // Use gen_range (allowing deprecated warnings if necessary)
+        #[allow(deprecated)]
+        let jitter_ms = self.rng.lock().unwrap().gen_range(0..=self.magnitude_ms);
+        duration + Duration::from_millis(jitter_ms)
+    }
+}
+
+/// No-op jitter model (no jitter).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoJitterModel;
+
+impl JitterModel for NoJitterModel {
+    fn apply_jitter(&mut self, duration: Duration) -> Duration {
+        duration
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn test_random_jitter_model() {
+        let mut model = RandomJitterModel::new(50); // Max 50ms jitter
+        let initial_duration = Duration::from_millis(100);
+        let jittered_duration = model.apply_jitter(initial_duration);
+
+        // The jittered duration should be at least the original duration...
+        assert!(jittered_duration >= initial_duration);
+        // ... and at most initial + 50ms.
+        assert!(jittered_duration <= initial_duration + Duration::from_millis(50));
+    }
+
+    #[test]
+    fn test_no_jitter_model() {
+        let mut model = NoJitterModel::default();
+        let initial_duration = Duration::from_millis(100);
+        let jittered_duration = model.apply_jitter(initial_duration);
+        assert_eq!(jittered_duration, initial_duration);
+    }
+}
+</document_content>
+</document>
+<document index="24">
+<source>vakthund-core/src/time/mod.rs</source>
+<document_content>
+//! ## vakthund-core::time
+//! **Virtual clocks & scheduler**
+//!
+//! ### Expectations (Production):
+//! - <2ms startup time for embedded deployments
+//! - Zero heap allocations in packet processing paths
+//! - Lock-free synchronization primitives
+//!
+//! ### Key Submodules:
+//! - `alloc/`: Memory pools and arena allocators using `bumpalo`
+//! - `events/`: Tokio-powered event bus with MPSC ringbuffer
+//! - `sim/`: Deterministic simulation core with virtual clock
+//! - `network/`: Network condition models (latency/jitter/packet loss)
+//! - `time/`: `VirtualClock` using atomic counters + scheduler
+//!
+//! ### Future:
+//! - ARM-optimized memory allocators
+//! - Hardware timestamping support
+
+// vakthund-core/src/time.rs
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Instant;
+
+#[derive(Clone)]
+pub struct VirtualClock {
+    epoch: std::time::Instant,
+    offset: Arc<AtomicU64>, // Nanoseconds
+}
+
+impl VirtualClock {
+    pub fn new(seed: u64) -> Self {
+        Self {
+            epoch: Instant::now(),
+            offset: Arc::new(AtomicU64::new(seed)),
+        }
+    }
+
+    /// TigerBeetle-style time access
+    pub fn now_ns(&self) -> u64 {
+        self.offset.load(Ordering::Acquire)
+    }
+
+    pub fn advance(&self, ns: u64) {
+        self.offset.fetch_add(ns, Ordering::Release);
+    }
+}
+</document_content>
+</document>
+<document index="25">
+<source>vakthund-core/src/events/mod.rs</source>
+<document_content>
+//! ## vakthund-core::events
+//! **Event bus using crossbeam's segmented queue for lock-free multi-producer handling**
+//!
+//! ### Expectations (Production):
+//! - <2ms startup time for embedded deployments
+//! - Zero heap allocations in packet processing paths
+//! - Lock-free synchronization primitives
+//!
+//! ### Key Submodules:
+//! - `alloc/`: Memory pools and arena allocators using `bumpalo`
+//! - `events/`: Tokio-powered event bus with MPSC ringbuffer
+//! - `sim/`: Deterministic simulation core with virtual clock
+//! - `network/`: Network condition models (latency/jitter/packet loss)
+//! - `time/`: `VirtualClock` using atomic counters + scheduler
+//!
+//! ### Future:
+//! - ARM-optimized memory allocators
+//! - Hardware timestamping support
+use bytes::Bytes;
+use crossbeam::queue::SegQueue;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum EventError {
+    #[error("Event queue capacity exceeded")]
+    QueueFull,
+}
+
+/// Unified event type carrying protocol-agnostic payload
+#[derive(Clone)]
+pub struct NetworkEvent {
+    pub timestamp: u64,
+    pub payload: Bytes,
+}
+
+pub struct EventBus {
+    queue: SegQueue<NetworkEvent>,
+    capacity: usize,
+}
+
+impl EventBus {
+    /// Create new event bus with fixed capacity
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            queue: SegQueue::new(),
+            capacity,
+        }
+    }
+
+    /// Enqueue event using Tigerbeetle-style *_verb naming
+    pub fn event_enqueue(&self, event: NetworkEvent) -> Result<(), EventError> {
+        if self.queue.len() >= self.capacity {
+            return Err(EventError::QueueFull);
+        }
+        self.queue.push(event);
+        Ok(())
+    }
+
+    /// Dequeue event with timeout
+    pub fn event_dequeue(&self) -> Option<NetworkEvent> {
+        self.queue.pop()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::prelude::EventBus;
+    use crate::prelude::NetworkEvent;
+    use bytes::Bytes;
+
+    #[test]
+    fn enqueue_dequeue_roundtrip() {
+        let bus = EventBus::with_capacity(1000);
+        for i in 0..1000 {
+            let event = NetworkEvent {
+                timestamp: i as u64,
+                payload: Bytes::from(vec![i as u8]),
+            };
+            bus.event_enqueue(event).unwrap();
+        }
+
+        for i in 0..1000 {
+            let event = bus.event_dequeue().unwrap();
+            assert_eq!(event.timestamp, i as u64);
+            assert_eq!(event.payload[0], i as u8);
+        }
+    }
+}
+</document_content>
+</document>
+<document index="26">
+<source>vakthund-core/src/sim/mod.rs</source>
+<document_content>
+//! ## vakthund-core::sim
+//! **Deterministic simulation core with virtual clock**
+//!
+//! ### Expectations (Production):
+//! - <2ms startup time for embedded deployments
+//! - Zero heap allocations in packet processing paths
+//! - Lock-free synchronization primitives
+//!
+//! ### Key Submodules:
+//! - `alloc/`: Memory pools and arena allocators using `bumpalo`
+//! - `events/`: Tokio-powered event bus with MPSC ringbuffer
+//! - `sim/`: Deterministic simulation core with virtual clock
+//! - `network/`: Network condition models (latency/jitter/packet loss)
+//! - `time/`: `VirtualClock` using atomic counters + scheduler
+//!
+//! ### Future:
+//! - ARM-optimized memory allocators
+//! - Hardware timestamping support
+
+use crate::events::NetworkEvent;
+use crate::prelude::VirtualClock;
+use std::sync::atomic::{AtomicUsize, Ordering}; // Correctly import atomic Ordering
+use std::sync::Arc;
+
+// TODO: can we avoid clone?
+#[derive(Clone)]
+pub struct ReplayEngine {
+    scenario: Scenario, // Assuming Scenario is defined elsewhere or will be
+    clock: VirtualClock,
+    position: Arc<AtomicUsize>,
+}
+
+// Assuming Scenario struct definition for compilation.
+// In real implementation, Scenario would be properly defined and loaded.
+#[derive(Clone)]
+pub struct Scenario {
+    pub events: Vec<NetworkEventWithDelay>,
+}
+
+#[derive(Clone)]
+pub struct NetworkEventWithDelay {
+    pub event: NetworkEvent,
+    pub delay_ns: u64,
+}
+
+impl ReplayEngine {
+    pub fn new(scenario: Scenario, clock: VirtualClock) -> Self {
+        Self {
+            scenario,
+            clock,
+            position: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    /// Get next event with virtual timing
+    pub async fn next_event(&self) -> Option<NetworkEvent> {
+        let pos = self.position.fetch_add(1, Ordering::Relaxed);
+        let event_with_delay = self.scenario.events.get(pos)?;
+        let event = &event_with_delay.event;
+
+        // Advance clock exactly as recorded
+        self.clock.advance(event_with_delay.delay_ns);
+        Some(event.clone())
+    }
+}
+
+// Long-running simulation harness
+//
+// async fn run_continuous_simulation() {
+//     let scenarios = load_scenarios_from_s3().await;
+//     let mut handles = Vec::new();
+
+//     for scenario in scenarios {
+//         let handle = tokio::spawn(async move {
+//             let hash = run_simulation(scenario.path, scenario.seed, None).await;
+//             store_simulation_result(hash).await;
+//         });
+//         handles.push(handle);
+//     }
+
+//     futures::future::join_all(handles).await;
+// }
+</document_content>
+</document>
+<document index="27">
+<source>vakthund-simulator/Cargo.toml</source>
+<document_content>
+[package]
+name = "vakthund-simulator"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { workspace = true }
+vakthund-core = { path = "../vakthund-core" }
+vakthund-telemetry = { path = "../vakthund-telemetry" }
+tokio = { workspace = true }
+num_cpus = { workspace = true }
+hex = { workspace = true }
+blake3 = { workspace = true }
+vakthund-detection = { path = "../vakthund-detection" }
+vakthund-protocols = { path = "../vakthund-protocols" }
+rand = "0.9.0"
+</document_content>
+</document>
+<document index="28">
+<source>vakthund-simulator/src/chaos.rs</source>
+<document_content>
+//! Chaos module.
+//!
+//! Implements fault injection for simulation. Here we simply modify the event content.
+
+/// Injects a fault into the event by appending a fault string.
+pub fn inject_fault(event: &mut String) {
+    event.push_str(" [FAULT INJECTED]");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_inject_fault() {
+        let mut event = String::from("Test event");
+        inject_fault(&mut event);
+        assert!(event.contains("FAULT INJECTED"));
+    }
+}
+</document_content>
+</document>
+<document index="29">
+<source>vakthund-simulator/src/lib.rs</source>
+<document_content>
+//! # Vakthund Simulator
+//!
+//! Provides a deterministic simulation and replay engine that uses core
+//! components (virtual clock, arena allocators, network condition models)
+//! to process a stream of simulated events. It also supports optional chaos
+//! (fault injection) and replay of recorded scenarios.
+
+use blake3::Hasher;
+use clap::Parser;
+use std::time::Duration;
+
+use vakthund_core::alloc::arena::ArenaAllocator;
+use vakthund_core::network::jitter::{JitterModel, RandomJitterModel};
+use vakthund_core::network::latency::{FixedLatencyModel, LatencyModel};
+use vakthund_core::time::VirtualClock;
+
+use rand::Rng;
+
+pub mod chaos;
+pub mod cli;
+pub mod replay;
+
+/// CLI arguments for simulation.
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+pub struct SimArgs {
+    /// Seed for the simulation
+    #[arg(long)]
+    pub seed: Option<u64>,
+
+    /// Number of events to simulate
+    #[arg(long, default_value_t = 10)]
+    pub events: usize,
+
+    /// Enable chaos fault injection (faults are injected with 10% probability)
+    #[arg(long, default_value_t = false)]
+    pub chaos: bool,
+}
+
+/// The Simulator ties together the virtual clock, memory allocation, network
+/// models, and chaos injection to simulate event processing.
+pub struct Simulator {
+    clock: VirtualClock,
+    allocator: ArenaAllocator,
+    latency_model: FixedLatencyModel,
+    jitter_model: RandomJitterModel,
+    state_hasher: Hasher,
+    chaos_enabled: bool,
+}
+
+impl Simulator {
+    /// Create a new Simulator with a given seed and chaos flag.
+    pub fn new(seed: u64, chaos_enabled: bool) -> Self {
+        Self {
+            clock: VirtualClock::new(seed),
+            allocator: ArenaAllocator::new(),
+            // Create a fixed latency model that adds 100ms per event.
+            latency_model: FixedLatencyModel::new(100),
+            // Create a jitter model that can add up to 10ms jitter.
+            jitter_model: RandomJitterModel::new(10),
+            state_hasher: Hasher::new(),
+            chaos_enabled,
+        }
+    }
+
+    /// Run the simulation for a given number of events. For each event:
+    /// - Allocate an event buffer from the arena (zero‑copy)
+    /// - Simulate network delay via latency + jitter and update the virtual clock
+    /// - Optionally inject a fault via the chaos module
+    /// - Update a state hasher (using blake3) for reproducibility
+    ///
+    /// Returns the final state hash.
+    pub fn run(&mut self, event_count: usize) -> String {
+        for event_id in 0..event_count {
+            // Allocate an event using the arena allocator.
+            // (Here we simulate an event as a String; in a real system this might be a packet buffer.)
+            let event_content = format!("Event {}", event_id);
+            let event_ref = self.allocator.allocate(event_content);
+
+            // Simulate network delay.
+            let base_delay_ns = 100_000_000; // 100ms in nanoseconds
+            let base_delay = Duration::from_nanos(base_delay_ns);
+            let delay = self.latency_model.apply_latency(base_delay);
+            let jitter = self.jitter_model.apply_jitter(Duration::from_nanos(0));
+            let total_delay = delay + jitter;
+            self.clock.advance(total_delay.as_nanos() as u64);
+
+            // Optionally inject a fault into the event.
+            if self.chaos_enabled && rand::thread_rng().random_bool(0.1) {
+                crate::chaos::inject_fault(event_ref);
+            }
+
+            // Update the state hasher using the event content.
+            self.state_hasher.update(event_ref.as_bytes());
+        }
+        hex::encode(self.state_hasher.finalize().as_bytes())
+    }
+}
+
+/// Public entry point to run the simulation.
+/// This function parses CLI arguments and runs the simulation engine.
+pub fn simulate() {
+    let args = SimArgs::parse();
+    let seed = args.seed.unwrap_or(42);
+    let mut simulator = Simulator::new(seed, args.chaos);
+    let state_hash = simulator.run(args.events);
+    println!("Simulation complete. State hash: {}", state_hash);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_simulator_runs() {
+        let mut simulator = Simulator::new(42, true);
+        let hash = simulator.run(5);
+        assert!(!hash.is_empty());
+    }
+}
+</document_content>
+</document>
+<document index="30">
+<source>vakthund-simulator/src/cli.rs</source>
+<document_content>
+//! CLI module for the simulator.
+
+use clap::Parser;
+
+/// Command‑line arguments for the Vakthund Simulator.
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+pub struct SimulatorCli {
+    /// Seed for the simulation
+    #[arg(long)]
+    pub seed: Option<u64>,
+
+    /// Number of events to simulate
+    #[arg(long, default_value_t = 10)]
+    pub events: usize,
+
+    /// Enable chaos fault injection
+    #[arg(long, default_value_t = false)]
+    pub chaos: bool,
+
+    /// Path to a scenario file for replay (optional)
+    #[arg(long)]
+    pub replay: Option<String>,
+}
+
+pub fn parse_args() -> SimulatorCli {
+    SimulatorCli::parse()
+}
+</document_content>
+</document>
+<document index="31">
+<source>vakthund-simulator/src/replay.rs</source>
+<document_content>
+//! Replay module.
+//!
+//! Provides functionality to replay a recorded scenario. In a real system the
+//! scenario would be parsed and played back deterministically using the same virtual clock,
+//! but here we provide a stub implementation.
+
+use super::Simulator;
+
+/// Replays a scenario from a given file path with the specified seed.
+/// For demonstration, this stub simply runs the simulator with a fixed number of events.
+pub fn replay_scenario(scenario_path: &str, seed: u64) {
+    // In a full implementation, you would parse the scenario file here.
+    println!("Replaying scenario '{}' with seed {}", scenario_path, seed);
+    let mut simulator = Simulator::new(seed, false);
+    // For this stub, we run 10 events.
+    let state_hash = simulator.run(10);
+    println!("Replay complete. State hash: {}", state_hash);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_replay_stub() {
+        replay_scenario("dummy_scenario.vscenario", 42);
+    }
+}
+</document_content>
+</document>
+</document_content>
+</document>
+<document index="33">
+<source>.cargo-husky/hooks/pre-push</source>
+<document_content>
+#!/bin/sh
+
+set -e
+
+echo '+cargo test --all'
+cargo test --all
+
+echo '+cargo-audit audit'
+cargo-audit audit
+</document_content>
+</document>
+<document index="34">
+<source>.cargo-husky/hooks/pre-commit</source>
+<document_content>
+#!/bin/sh
+
+set -e
+
+echo '+cargo fmt --check'
+cargo fmt --check
+</document_content>
+</document>
+<document index="35">
+<source>vakthund-detection/Cargo.toml</source>
+<document_content>
+[package]
+name = "vakthund-detection"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aho-corasick = "1"
+parking_lot = { workspace = true }
+thiserror = { workspace = true }
+</document_content>
+</document>
+<document index="36">
+<source>vakthund-detection/src/signatures/mod.rs</source>
+<document_content>
+//! ## vakthund-detection::signatures
+//! **Aho-Corasick pattern matching with thread-safe updates**
+//!
+//! ### Expectations:
+//! - Good detection latency (performance will depend on pattern set and input size)
+//! - <0.1% false positive rate in validation corpus
+//! - Thread-safe pattern updates
+//! ### Components:
+//! - `signatures/`: Aho-Corasick matcher
+//! - `anomaly/`: Streaming PCA with incremental SVD
+//! - `heuristics/`: Rule engine with WASM-based rules
+//! ### Future:
+//! - FPGA-accelerated pattern matching (if needed for extreme performance)
+//! - Federated learning for anomaly models
+
+use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
+use parking_lot::RwLock;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum DetectionError {
+    #[error("Pattern compilation failed: {0}")]
+    PatternError(String), // We'll use a generic string error for aho-corasick
+}
+
+pub struct SignatureEngine {
+    patterns: RwLock<Vec<String>>, // Store patterns as Strings
+    matcher: RwLock<Option<AhoCorasick>>,
+}
+
+impl SignatureEngine {
+    pub fn new() -> Self {
+        Self {
+            patterns: RwLock::new(Vec::new()),
+            matcher: RwLock::new(None),
+        }
+    }
+
+    /// Add pattern using Tigerbeetle-style *_verb
+    pub fn pattern_add(&self, pattern: &str) -> Result<(), DetectionError> {
+        let mut patterns = self.patterns.write();
+        patterns.push(pattern.to_string()); // Store pattern as String
+        self.rebuild_matcher()
+    }
+
+    /// Rebuild Aho-Corasick matcher when patterns change
+    fn rebuild_matcher(&self) -> Result<(), DetectionError> {
+        let patterns = self.patterns.read();
+        let matcher = AhoCorasickBuilder::new()
+            .build(patterns.iter()) // Build from iterator of &String
+            .map_err(|e| DetectionError::PatternError(e.to_string()))?; // Convert error
+
+        *self.matcher.write() = Some(matcher);
+        Ok(())
+    }
+
+    /// Scan buffer against current patterns
+    #[inline] // Inlining for performance
+    pub fn buffer_scan(&self, data: &[u8]) -> Vec<usize> {
+        // Return Vec<usize> of match indices
+        let matcher_read_guard = self.matcher.read(); // Acquire read lock once
+        matcher_read_guard.as_ref().map_or(Vec::new(), |matcher| {
+            matcher
+                .find_overlapping_iter(data) // Find overlapping matches
+                .map(|m| m.pattern().as_usize()) // Get pattern index as usize
+                .collect()
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pattern_matching() {
+        let engine = SignatureEngine::new();
+        engine.pattern_add("test").unwrap();
+
+        let matches = engine.buffer_scan(b"this is a test");
+        assert!(!matches.is_empty());
+    }
+
+    #[test]
+    fn test_no_match() {
+        let engine = SignatureEngine::new();
+        engine.pattern_add("test").unwrap();
+
+        let matches = engine.buffer_scan(b"no match here");
+        assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn test_multiple_patterns() {
+        let engine = SignatureEngine::new();
+        engine.pattern_add("test").unwrap();
+        engine.pattern_add("example").unwrap();
+
+        let matches = engine.buffer_scan(b"this is a test with an example");
+        assert_eq!(matches.len(), 2); // Expecting two matches
+        assert!(matches.contains(&0)); // Index 0 for "test"
+        assert!(matches.contains(&1)); // Index 1 for "example"
+    }
+}
+</document_content>
+</document>
+<document index="37">
+<source>vakthund-detection/src/lib.rs</source>
+<document_content>
+//! # Vakthund Detection Engine
+//!
+//! Crate for signature-based and anomaly-based detection functionalities.
+
+// pub mod anomaly;
+// pub mod heuristics;
+pub mod signatures;
+
+pub use signatures::SignatureEngine;
+</document_content>
+</document>
+<document index="38">
+<source>vakthund-protocols/Cargo.toml</source>
+<document_content>
+[package]
+name = "vakthund-protocols"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bytes = { workspace = true }
+hex = "0.4.3"
+</document_content>
+</document>
+<document index="39">
+<source>vakthund-protocols/src/lib.rs</source>
+<document_content>
+//! # Vakthund Protocol Parsers
+//!
+//! Crate for parsing network protocols like MQTT, CoAP, and Modbus.
+
+// pub mod coap;
+// pub mod modbus;
+pub mod mqtt;
+
+pub use mqtt::MqttPacket;
+</document_content>
+</document>
+<document index="40">
+<source>vakthund-protocols/src/mqtt/mod.rs</source>
+<document_content>
+//! ## vakthund-protocols::mqtt
+//!
+//! A combined MQTT protocol parser that preserves the simplicity of a
+//! fixed‑offset parser but adds features like error handling and proper
+//! variable‑length decoding. It assumes that when the first byte (header)
+//! equals 0x10, the next 4 bytes of the variable header represent a topic.
+//! For other packet types, the entire variable header is treated as the payload.
+//!
+//! ### Expectations:
+//! - <100ns per byte parsing throughput
+//! - Protocol validation via const assertions
+//! - Fuzz-tested against RFC edge cases
+//!
+//! ### Future:
+//! - QUIC/UDP-based protocol support
+//! - Autogenerated parsers from formal specifications
+use bytes::Bytes;
+use hex;
+
+/// Errors that can occur while parsing an MQTT packet.
+#[derive(Clone, Debug, PartialEq)]
+pub enum MqttParseError {
+    InsufficientData,
+    InvalidHeader,
+    RemainingLengthMalformed,
+    PacketIncomplete,
+}
+
+/// Represents an MQTT packet as zero‑copy slices into the original data.
+#[derive(Debug, Copy, Clone)]
+pub struct MqttPacket<'a> {
+    pub header: u8,
+    /// For header 0x10, this is the topic (4 bytes); for other packets this is empty.
+    pub topic: &'a [u8],
+    /// The remaining bytes of the packet (variable header and payload).
+    pub payload: &'a [u8],
+}
+
+impl<'a> MqttPacket<'a> {
+    /// Generates a rule ID string based on the packet contents.
+    /// For header 0x10, it produces "MQTT_{hex‑encoded topic}",
+    /// otherwise it returns "MQTT_GENERIC".
+    pub fn rule_id(&self) -> String {
+        if self.header == 0x10 && self.topic.len() == 4 {
+            format!("MQTT_{}", hex::encode(self.topic))
+        } else {
+            "MQTT_GENERIC".to_string()
+        }
+    }
+}
+
+/// A simple MQTT parser that works on zero‑copy data.
+pub struct MqttParser;
+
+impl MqttParser {
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Parses an MQTT packet from a `Bytes` slice.
+    ///
+    /// The parser expects:
+    /// 1. A fixed header (1 byte).
+    /// 2. A variable‑length encoded “remaining length” field.
+    /// 3. For header 0x10, a 4‑byte topic field; otherwise, the whole
+    ///    variable header is treated as payload.
+    ///
+    /// Returns a structured `MqttPacket` on success.
+    pub fn parse<'a>(&self, data: &'a Bytes) -> Result<MqttPacket<'a>, MqttParseError> {
+        if data.len() < 2 {
+            return Err(MqttParseError::InsufficientData);
+        }
+        let header = data[0];
+
+        // Decode the remaining length field (which can be 1-4 bytes).
+        let (remaining_length, length_field_size) = Self::decode_remaining_length(&data[1..])?;
+        let fixed_header_length = 1 + length_field_size;
+
+        // Check that the total packet is present.
+        if data.len() < fixed_header_length + (remaining_length as usize) {
+            return Err(MqttParseError::PacketIncomplete);
+        }
+
+        // For header 0x10, assume the next 4 bytes represent the topic.
+        if header == 0x10 {
+            if remaining_length < 4 {
+                return Err(MqttParseError::InsufficientData);
+            }
+            let topic = &data[fixed_header_length..fixed_header_length + 4];
+            let payload =
+                &data[fixed_header_length + 4..fixed_header_length + (remaining_length as usize)];
+            Ok(MqttPacket {
+                header,
+                topic,
+                payload,
+            })
+        } else {
+            // For other packet types, we do not extract a topic.
+            let payload =
+                &data[fixed_header_length..fixed_header_length + (remaining_length as usize)];
+            Ok(MqttPacket {
+                header,
+                topic: &[],
+                payload,
+            })
+        }
+    }
+
+    /// Decodes MQTT’s variable‑length “remaining length” field.
+    ///
+    /// Returns a tuple of (decoded_value, number_of_bytes_used).
+    fn decode_remaining_length(input: &[u8]) -> Result<(u32, usize), MqttParseError> {
+        let mut multiplier: u32 = 1;
+        let mut value: u32 = 0;
+        let mut i = 0;
+        for byte in input.iter() {
+            let byte_val = *byte;
+            value += u32::from(byte_val & 0x7F) * multiplier;
+            i += 1;
+            // Prevent overflow (MQTT spec limits the length field to 4 bytes)
+            if multiplier > 128 * 128 * 128 {
+                return Err(MqttParseError::RemainingLengthMalformed);
+            }
+            if (byte_val & 0x80) == 0 {
+                return Ok((value, i));
+            }
+            multiplier *= 128;
+        }
+        Err(MqttParseError::RemainingLengthMalformed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+
+    #[test]
+    fn test_valid_connect_packet() {
+        // Build a packet with:
+        // - header 0x10,
+        // - remaining length = 7 (4 bytes for topic + 3 bytes for payload),
+        // - topic "test" (4 bytes),
+        // - payload "abc".
+        // The remaining length is encoded in one byte (0x07).
+        let mut packet = vec![0x10, 0x07];
+        packet.extend_from_slice(b"test");
+        packet.extend_from_slice(b"abc");
+        let bytes = Bytes::from(packet);
+        let parser = MqttParser::new();
+        let mqtt_packet = parser.parse(&bytes).unwrap();
+        assert_eq!(mqtt_packet.header, 0x10);
+        assert_eq!(mqtt_packet.topic, b"test");
+        assert_eq!(mqtt_packet.payload, b"abc");
+        assert_eq!(mqtt_packet.rule_id(), "MQTT_74657374");
+    }
+
+    #[test]
+    fn test_valid_generic_packet() {
+        // Build a packet with:
+        // - header 0x20,
+        // - remaining length = 3,
+        // - payload "xyz".
+        let mut packet = vec![0x20, 0x03];
+        packet.extend_from_slice(b"xyz");
+        let bytes = Bytes::from(packet);
+        let parser = MqttParser::new();
+        let mqtt_packet = parser.parse(&bytes).unwrap();
+        assert_eq!(mqtt_packet.header, 0x20);
+        assert_eq!(mqtt_packet.topic.len(), 0);
+        assert_eq!(mqtt_packet.payload, b"xyz");
+        assert_eq!(mqtt_packet.rule_id(), "MQTT_GENERIC");
+    }
+
+    #[test]
+    fn test_incomplete_packet() {
+        // A packet that claims to have more bytes than are provided.
+        let packet = vec![0x10, 0x07, b'a'];
+        let bytes = Bytes::from(packet);
+        let parser = MqttParser::new();
+        assert!(matches!(
+            parser.parse(&bytes),
+            Err(MqttParseError::PacketIncomplete)
+        ));
+    }
+
+    #[test]
+    fn test_malformed_remaining_length() {
+        // A packet with a remaining length field that does not terminate.
+        let packet = vec![0x10, 0xFF, 0xFF, 0xFF, 0xFF];
+        let bytes = Bytes::from(packet);
+        let parser = MqttParser::new();
+        assert!(matches!(
+            parser.parse(&bytes),
+            Err(MqttParseError::RemainingLengthMalformed)
+        ));
+    }
+}
+</document_content>
+</document>
+<document index="41">
+<source>vakthund-telemetry/Cargo.toml</source>
+<document_content>
+[package]
+name = "vakthund-telemetry"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+opentelemetry = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+prometheus = { workspace = true }
+tracing-test = "0.2.5"
+</document_content>
+</document>
+<document index="42">
+<source>vakthund-telemetry/src/metrics/mod.rs</source>
+<document_content>
+//! ## vakthund-telemetry::metrics
+//! **Prometheus exporter with histograms**
+//!
+//! ### Expectations:
+//! - <3% overhead at 1M events/sec
+//! - Structured logging with OpenTelemetry
+//! - Alert deduplication with sliding windows
+//!
+//! ### Components:
+//! - `metrics/`: Prometheus exporter with histograms
+//! - `logging/`: JSON logger with `serde` integration
+//! - `alerts/`: Stateful alert correlation engine
+//!
+//! ### Future:
+//! - eBPF-based performance monitoring
+//! - Anomaly detection on telemetry data
+
+use prometheus::{Counter, Histogram, HistogramOpts, Registry};
+
+#[derive(Clone)]
+pub struct MetricsRecorder {
+    registry: prometheus::Registry,
+    pub processed_events: prometheus::Counter,
+    detection_latency: prometheus::Histogram,
+}
+
+impl Default for MetricsRecorder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MetricsRecorder {
+    pub fn new() -> Self {
+        let registry = Registry::new();
+        let processed_events =
+            Counter::new("vakthund_events_total", "Total processed network events").unwrap();
+
+        let detection_latency = Histogram::with_opts(
+            HistogramOpts::new(
+                "vakthund_detection_latency_ns",
+                "Detection engine processing time",
+            )
+            .buckets(vec![1_000.0, 10_000.0, 100_000.0, 1_000_000.0]),
+        )
+        .unwrap();
+
+        registry
+            .register(Box::new(processed_events.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(detection_latency.clone()))
+            .unwrap();
+
+        Self {
+            registry,
+            processed_events,
+            detection_latency,
+        }
+    }
+
+    pub fn inc_processed_events(&self) {
+        self.processed_events.inc();
+    }
+}
+</document_content>
+</document>
+<document index="43">
+<source>vakthund-telemetry/src/lib.rs</source>
+<document_content>
+//! # Vakthund Telemetry and Monitoring
+//!
+//! Crate for logging, metrics, and alerting functionalities.
+
+// pub mod alerts;
+pub mod logging;
+pub mod metrics;
+
+pub use logging::EventLogger;
+pub use metrics::MetricsRecorder;
+</document_content>
+</document>
+<document index="44">
+<source>vakthund-telemetry/src/logging/mod.rs</source>
+<document_content>
+//! ## vakthund-telemetry::logging
+//! **JSON logger with `serde` integration**
+//!
+//! ### Expectations:
+//! - <3% overhead at 1M events/sec
+//! - Structured logging with OpenTelemetry
+//! - Alert deduplication with sliding windows
+//!
+//! ### Components:
+//! - `metrics/`: Prometheus exporter with histograms
+//! - `logging/`: JSON logger with `serde` integration
+//! - `alerts/`: Stateful alert correlation engine
+//!
+//! ### Future:
+//! - eBPF-based performance monitoring
+//! - Anomaly detection on telemetry data
+//!
+//! Structured logging with tracing and OpenTelemetry
+
+use opentelemetry::KeyValue;
+use tracing::{info_span, Instrument};
+use tracing_subscriber::fmt::format::FmtSpan;
+
+pub struct EventLogger;
+
+impl EventLogger {
+    pub fn init() {
+        tracing_subscriber::fmt()
+            .with_span_events(FmtSpan::ENTER)
+            .with_thread_names(true)
+            .init();
+    }
+
+    /// Log security event with key metadata
+    #[inline] // Potential inlining for performance
+    pub async fn log_event(event_type: &str, metadata: Vec<KeyValue>) {
+        let span = info_span!(
+            "security_event",
+            event_type = event_type,
+            otel.kind = "INTERNAL"
+        );
+
+        async {
+            tracing::info!(
+                metadata = ?metadata,
+                "Security event occurred"
+            );
+        }
+        .instrument(span)
+        .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tracing_test::traced_test;
+
+    #[traced_test]
+    #[test]
+    fn test_logging() {
+        EventLogger::log_event("test", vec![KeyValue::new("key", "value")]);
+        assert!(logs_contain("Security event occurred"));
+    }
+}
+</document_content>
+</document>
+</documents>

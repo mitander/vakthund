@@ -1,0 +1,23 @@
+[package]
+name = "vakthund-cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { workspace = true }
+figment = "0.10.19"
+vakthund-core = { path = "../vakthund-core" }
+vakthund-telemetry = { path = "../vakthund-telemetry" }
+vakthund-detection = { path = "../vakthund-detection" }
+vakthund-protocols = { path = "../vakthund-protocols" }
+vakthund-prevention = { path = "../vakthund-prevention" }
+vakthund-simulator = { path = "../vakthund-simulator/" }
+vakthund-capture = { path = "../vakthund-capture/" }
+tokio = { workspace = true }
+tracing = { workspace = true }
+num_cpus = { workspace = true }
+blake3 = { workspace = true }
+hex = { workspace = true }
+proptest = { workspace = true }
+opentelemetry = "0.27.1"
+bytes = "1.10.0"

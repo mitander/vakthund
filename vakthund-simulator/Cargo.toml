@@ -1,0 +1,16 @@
+[package]
+name = "vakthund-simulator"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { workspace = true }
+vakthund-core = { path = "../vakthund-core" }
+vakthund-telemetry = { path = "../vakthund-telemetry" }
+tokio = { workspace = true }
+num_cpus = { workspace = true }
+hex = { workspace = true }
+blake3 = { workspace = true }
+vakthund-detection = { path = "../vakthund-detection" }
+vakthund-protocols = { path = "../vakthund-protocols" }
+rand = "0.9.0"
