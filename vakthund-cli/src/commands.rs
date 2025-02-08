@@ -1,9 +1,3 @@
-//! ## vakthund-cli::commands
-//! **Command parsing and execution logic**
-//!
-//! This module handles command-line argument parsing using `clap` and
-//! orchestrates the execution of different Vakthund modes (`run`, `simulate`).
-
 use bytes::Bytes;
 use clap::{Args, Parser, Subcommand};
 use opentelemetry::KeyValue;
@@ -14,7 +8,7 @@ use tracing::info_span;
 use tracing::{error, info, instrument, Instrument};
 
 use vakthund_capture::capture;
-use vakthund_core::event_bus::{EventBus, NetworkEvent};
+use vakthund_core::{events::network::NetworkEvent, events::EventBus};
 use vakthund_detection::signatures::SignatureEngine;
 use vakthund_prevention::firewall::Firewall;
 use vakthund_protocols::mqtt::MqttParser;
@@ -206,11 +200,13 @@ async fn run_capture_loop(
 
 #[instrument(level = "debug", name = "enqueue_captured_packet", skip(event_bus))]
 fn enqueue_captured_packet(packet: &vakthund_capture::packet::Packet, event_bus: Arc<EventBus>) {
-    let event = NetworkEvent {
-        timestamp: 0, // Replace with actual timestamp if available
-        payload: Bytes::from(packet.data.clone()),
-    };
+    // 1. Get a timestamp (replace with actual timestamp source)
+    let timestamp = Instant::now().elapsed().as_nanos() as u64;
 
+    // 2. Construct the NetworkEvent
+    let event = NetworkEvent::new(timestamp, Bytes::from(packet.data.clone()));
+
+    // 3. Enqueue the event
     if let Err(e) = event_bus.try_push(event) {
         error!("Failed to push packet: {:?}", e);
     }

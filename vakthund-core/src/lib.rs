@@ -14,7 +14,8 @@
 //!
 //! ### Key Submodules:
 //! - `alloc`: Memory pools and arena allocators using `bumpalo`
-//! - `event_bus`: Tokio-powered event bus with MPSC ringbuffer
+//! - `events`: Tokio-powered event bus with MPSC ringbuffer
+//! - `config`: Configuration loading and validation
 //! - `sim`: Deterministic simulation core with virtual clock
 //! - `network`: Network condition models (latency/jitter/packet loss)
 //! - `time`: `VirtualClock` using atomic counters + scheduler
@@ -24,14 +25,16 @@
 //! - Hardware timestamping support
 
 pub mod alloc;
-pub mod event_bus;
+pub mod config;
+pub mod events;
 pub mod network;
 pub mod sim;
 pub mod time;
 
 pub mod prelude {
     pub use crate::alloc::*;
-    pub use crate::event_bus::*;
+    pub use crate::config::*;
+    pub use crate::events::*;
     pub use crate::network::*;
     pub use crate::sim::*;
     pub use crate::time::*;
