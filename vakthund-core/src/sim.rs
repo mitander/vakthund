@@ -17,7 +17,7 @@
 //! - ARM-optimized memory allocators
 //! - Hardware timestamping support
 
-use crate::events::NetworkEvent;
+use crate::event_bus::NetworkEvent;
 use crate::prelude::VirtualClock;
 use std::sync::atomic::{AtomicUsize, Ordering}; // Correctly import atomic Ordering
 use std::sync::Arc;

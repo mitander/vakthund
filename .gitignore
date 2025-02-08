@@ -27,3 +27,6 @@ Cargo.lock
 # Simulation logs and bug reports
 /simulation_logs/
 /bug_reports/
+
+# repocopy
+copied_files.txt

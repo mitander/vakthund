@@ -77,8 +77,6 @@ impl Simulator {
 
         // Optionally inject a fault into the event.
         if self.chaos_enabled && rand::rng().random_bool(0.1) {
-            // Replaced deprecated thread_rng with rng()
-            // Replaced deprecated gen_bool
             crate::chaos::inject_fault(event_ref);
         }
 

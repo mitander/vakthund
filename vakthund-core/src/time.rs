@@ -36,7 +36,6 @@ impl VirtualClock {
         }
     }
 
-    /// TigerBeetle-style time access
     pub fn now_ns(&self) -> u64 {
         self.offset.load(Ordering::Acquire)
     }

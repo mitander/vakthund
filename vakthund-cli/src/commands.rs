@@ -12,8 +12,9 @@ use std::sync::{atomic::AtomicBool, Arc};
 use std::time::Instant;
 use tracing::info_span;
 use tracing::{error, info, instrument, Instrument};
-use vakthund_capture::live_capture::live_capture_loop;
-use vakthund_core::events::{EventBus, NetworkEvent};
+
+use vakthund_capture::capture;
+use vakthund_core::event_bus::{EventBus, NetworkEvent};
 use vakthund_detection::signatures::SignatureEngine;
 use vakthund_prevention::firewall::Firewall;
 use vakthund_protocols::mqtt::MqttParser;
@@ -56,21 +57,24 @@ pub struct SimulateArgs {
 }
 
 /// Production mode that uses live capture via pcap.
-/// It sets up a termination flag and calls live_capture_loop.
+/// It sets up a termination flag and calls run().
 /// Each captured packet is converted into a NetworkEvent and enqueued for processing.
 #[instrument(level = "info", name = "run_production_mode", skip(metrics))]
 pub async fn run_production_mode(
     run_args: RunArgs,
     metrics: MetricsRecorder,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let event_bus = Arc::new(EventBus::with_capacity(10_000));
-    let event_bus_for_processing = event_bus.clone();
+    let event_bus = Arc::new(EventBus::with_capacity(10_000).expect("Failed to create event bus"));
+    let event_bus_for_processing = event_bus.share();
     let metrics_processor = metrics.clone();
 
-    let processor_handle = tokio::spawn(
-        async move { process_events_from_bus(event_bus_for_processing, metrics_processor).await }
+    let processor_handle =
+        tokio::spawn(
+            async move {
+                process_events_from_bus(event_bus_for_processing.into(), metrics_processor).await
+            }
             .instrument(info_span!("event_processor_task")),
-    );
+        );
 
     let buffer_size = 1_048_576; // 1 MB
     let promiscuous = true;
@@ -79,7 +83,7 @@ pub async fn run_production_mode(
 
     info!("Starting live capture on interface: {}", interface);
 
-    let event_bus_for_capture = event_bus.clone();
+    let event_bus_for_capture = event_bus.share();
     let interface_clone = interface.clone();
 
     let capture_handle = tokio::spawn(
@@ -89,7 +93,7 @@ pub async fn run_production_mode(
                 buffer_size,
                 promiscuous,
                 &terminate,
-                event_bus_for_capture,
+                event_bus_for_capture.into(),
             )
             .await
         }
@@ -111,9 +115,9 @@ async fn process_events_from_bus(
     metrics: MetricsRecorder,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let parser = MqttParser::new();
-    let signature_engine = SignatureEngine::new(); // Initialize signature engine
+    let signature_engine = SignatureEngine::new();
 
-    while let Some(event) = event_bus.event_dequeue() {
+    while let Some(event) = event_bus.try_pop() {
         process_network_event(event, &parser, &signature_engine, &metrics).await;
     }
     Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
@@ -188,7 +192,7 @@ async fn run_capture_loop(
     terminate: &AtomicBool,
     event_bus: Arc<EventBus>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    live_capture_loop(
+    capture::run(
         interface,
         buffer_size,
         promiscuous,
@@ -207,8 +211,8 @@ fn enqueue_captured_packet(packet: &vakthund_capture::packet::Packet, event_bus:
         payload: Bytes::from(packet.data.clone()),
     };
 
-    if let Err(e) = event_bus.event_enqueue(event) {
-        error!("Failed to enqueue packet: {:?}", e);
+    if let Err(e) = event_bus.try_push(event) {
+        error!("Failed to push packet: {:?}", e);
     }
 
     let packet_size = packet.data.len();
