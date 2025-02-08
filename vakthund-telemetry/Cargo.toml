@@ -10,3 +10,6 @@ tracing-subscriber = { workspace = true }
 prometheus = { workspace = true }
 tracing-test = "0.2.5"
 tokio = { workspace = true }
+
+[features]
+engine = []

@@ -7,17 +7,11 @@ edition = "2021"
 bytes = { workspace = true }
 crossbeam = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }  # Added macros and rt-multi-thread
 proptest = { workspace = true }
 bumpalo = "3.17.0"
 rand = { version = "0.9.0", features = ["small_rng", "std"] }
 concurrent-queue = "2.5.0"
-serde = { version="1.0.217", features = ["derive"] }
-serde_yaml = "0.9.34"
-
-[dev-dependencies]
+serde = { version = "1.0", features = ["derive"] } # Added serde for config
+serde_yaml = "0.9" # Added yaml format
 criterion = "0.5.1"
-
-[[bench]]
-name = "event_bus_bench"
-harness = false

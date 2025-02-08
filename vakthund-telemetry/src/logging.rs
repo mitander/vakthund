@@ -21,6 +21,7 @@ use opentelemetry::KeyValue;
 use tracing::{info_span, Instrument};
 use tracing_subscriber::fmt::format::FmtSpan;
 
+#[derive(Clone)]
 pub struct EventLogger;
 
 impl EventLogger {

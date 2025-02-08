@@ -4,7 +4,7 @@ extern crate criterion;
 use bytes::Bytes;
 use criterion::Criterion;
 
-use vakthund_core::event_bus::{EventBus, NetworkEvent};
+use vakthund_core::events::{EventBus, NetworkEvent};
 
 fn bench_event_bus_push_pop(c: &mut Criterion) {
     let mut group = c.benchmark_group("event_bus_throughput");
@@ -16,6 +16,8 @@ fn bench_event_bus_push_pop(c: &mut Criterion) {
             let event = NetworkEvent {
                 timestamp: 0,
                 payload: Bytes::from_static(b"test_payload"),
+                source: None,
+                destination: None,
             };
             b.iter(|| {
                 event_bus.try_push(event.clone()).unwrap();
