@@ -3,9 +3,11 @@
 use bytes::Bytes;
 use clap::{Args, Parser, Subcommand};
 use opentelemetry::KeyValue;
+use std::fs::File;
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{atomic::AtomicBool, Arc};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tracing::info_span;
 use tracing::{error, info, instrument, Instrument};
 
@@ -41,9 +43,10 @@ pub struct RunArgs {
 
 #[derive(Args, Debug, Clone)]
 pub struct SimulateArgs {
+    /// Optional scenario file to replay; if not provided, a simulation will be run.
     #[arg(short, long)]
-    pub scenario: PathBuf,
-    /// Number of events to simulate
+    pub scenario: Option<PathBuf>,
+    /// Number of events to simulate (used when no scenario is provided)
     #[arg(long, default_value_t = 10)]
     pub events: usize,
     #[arg(long, default_value_t = 0)]
@@ -60,7 +63,7 @@ pub async fn run_production_mode(
     run_args: RunArgs,
     metrics: MetricsRecorder,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let event_bus = Arc::new(EventBus::with_capacity(8192).expect("Failed to create event bus"));
+    let event_bus = Arc::new(EventBus::with_capacity(10_000).expect("Failed to create event bus"));
     let event_bus_for_processing = event_bus.share();
     let metrics_processor = metrics.clone();
 
@@ -139,13 +142,13 @@ async fn process_network_event(
         }
     };
 
-    let start_time = Instant::now(); // Start timer before detection
-    let matches = signature_engine.buffer_scan(packet.payload); // Use signature engine
+    let start_time = Instant::now();
+    let matches = signature_engine.buffer_scan(packet.payload);
     let elapsed_time = start_time.elapsed();
 
     metrics
         .detection_latency
-        .observe(elapsed_time.as_nanos() as f64); // Record latency
+        .observe(elapsed_time.as_nanos() as f64);
     if !matches.is_empty() {
         handle_detection_match(metrics).await;
     }
@@ -153,9 +156,8 @@ async fn process_network_event(
 
 #[instrument(level = "debug", name = "handle_detection_match", skip(metrics))]
 async fn handle_detection_match(metrics: &MetricsRecorder) {
-    let block_result =
-        Firewall::new("dummy_interface") // Consider making interface configurable
-            .and_then(|mut fw| fw.ip_block(std::net::Ipv4Addr::new(127, 0, 0, 1))); // Example block
+    let block_result = Firewall::new("dummy_interface")
+        .and_then(|mut fw| fw.ip_block(std::net::Ipv4Addr::new(127, 0, 0, 1)));
 
     match block_result {
         Ok(_) => {
@@ -185,7 +187,7 @@ async fn run_capture_loop(
     interface: &str,
     buffer_size: usize,
     promiscuous: bool,
-    terminate: &AtomicBool,
+    terminate: &Arc<AtomicBool>,
     event_bus: Arc<EventBus>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     capture::run(
@@ -202,13 +204,9 @@ async fn run_capture_loop(
 
 #[instrument(level = "debug", name = "enqueue_captured_packet", skip(event_bus))]
 fn enqueue_captured_packet(packet: &vakthund_capture::packet::Packet, event_bus: Arc<EventBus>) {
-    // 1. Get a timestamp (replace with actual timestamp source)
-    let timestamp = std::time::Instant::now().elapsed().as_nanos() as u64;
-
-    // 2. Construct the NetworkEvent
+    let timestamp = Instant::now().elapsed().as_nanos() as u64;
     let event = NetworkEvent::new(timestamp, Bytes::from(packet.data.clone()));
 
-    // 3. Enqueue the event
     if let Err(e) = event_bus.try_push(event) {
         error!("Failed to push packet: {:?}", e);
     }
@@ -228,6 +226,25 @@ fn enqueue_captured_packet(packet: &vakthund_capture::packet::Packet, event_bus:
     info!("Captured packet with {} bytes", packet_size);
 }
 
+/// Generates a bug report file containing the given report details.
+fn generate_bug_report(report: &str) {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let filename = format!("bug_report_{}.txt", now);
+    match File::create(&filename) {
+        Ok(mut file) => {
+            if let Err(e) = file.write_all(report.as_bytes()) {
+                eprintln!("Failed to write bug report: {:?}", e);
+            } else {
+                println!("Bug report written to {}", filename);
+            }
+        }
+        Err(e) => eprintln!("Failed to create bug report file: {:?}", e),
+    }
+}
+
 /// Simulation mode: run the simulator for a given number of events or replay a scenario if provided.
 #[instrument(level = "info", name = "run_simulation_mode", skip(metrics))]
 pub async fn run_simulation_mode(
@@ -235,22 +252,23 @@ pub async fn run_simulation_mode(
     metrics: MetricsRecorder,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     metrics.processed_events.inc();
-    if sim_args.scenario.exists() {
-        // Use ReplayEngine from vakthund-simulator/replay
-        println!("Replaying scenario from file: {:?}", sim_args.scenario);
-        let scenario =
-            match vakthund_simulator::replay::Scenario::load_from_file(&sim_args.scenario) {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("Failed to load scenario: {:?}", e);
-                    return Err(Box::new(e));
-                }
-            };
+    if let Some(ref scenario_path) = sim_args.scenario {
+        println!("Replaying scenario from file: {:?}", scenario_path);
+        let scenario = match vakthund_simulator::replay::Scenario::load_from_file(scenario_path) {
+            Ok(s) => s,
+            Err(e) => {
+                let report = format!(
+                    "Failed to load scenario.\nError: {:?}\nArguments: {:?}",
+                    e, sim_args
+                );
+                generate_bug_report(&report);
+                return Err(Box::new(e));
+            }
+        };
         let clock = vakthund_core::time::VirtualClock::new(sim_args.seed);
         let replay_engine = vakthund_simulator::replay::ReplayEngine::new(scenario, clock);
-        // For this stub, we simply iterate through the replayed events.
         while let Some(_event) = replay_engine.next_event().await {
-            // Here you could process each event as needed.
+            // Process replayed events as needed.
         }
         let final_hash = "replay_dummy_hash".to_string();
         println!("Replay complete. State hash: {}", final_hash);
@@ -263,12 +281,21 @@ pub async fn run_simulation_mode(
         )
         .await;
     } else {
-        // No scenario file provided, run standard simulation.
         let mut simulator = Simulator::new(sim_args.seed, false);
         let final_hash = simulator.run(sim_args.events);
         println!("Simulation complete. State hash: {}", final_hash);
-        if let Some(expected_hash) = sim_args.validate_hash {
-            assert_eq!(final_hash, expected_hash, "State hash mismatch!");
+        if let Some(ref expected_hash) = sim_args.validate_hash {
+            if final_hash != *expected_hash {
+                let report = format!(
+                    "Simulation error: state hash mismatch!\nExpected: {}\nGot: {}\nArguments: {:?}",
+                    expected_hash, final_hash, sim_args
+                );
+                generate_bug_report(&report);
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "State hash mismatch",
+                )));
+            }
         }
         EventLogger::log_event(
             "simulation_complete",
