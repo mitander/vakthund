@@ -15,6 +15,14 @@ concurrent-queue = "2.5.0"
 serde = { version = "1.0", features = ["derive"] } # Added serde for config
 serde_yaml = "0.9" # Added yaml format
 criterion = "0.5.1"
+tracing = "0.1.41"
+opentelemetry = "0.27.1"
+
+vakthund-telemetry = { path = "../vakthund-telemetry" }
+vakthund-detection = { path = "../vakthund-detection" }
+vakthund-prevention = { path = "../vakthund-prevention" }
+vakthund-protocols = { path = "../vakthund-protocols" }
+vakthund-capture = { path = "../vakthund-capture" }
 
 [[bench]]
 name = "event_bus_bench"

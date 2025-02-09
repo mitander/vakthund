@@ -1,0 +1,17 @@
+[package]
+name = "vakthund-engine"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+vakthund-core = { path = "../vakthund-core" }
+vakthund-simulator = { path = "../vakthund-simulator" }
+vakthund-telemetry = { path = "../vakthund-telemetry" }
+vakthund-detection = { path = "../vakthund-detection" }
+vakthund-prevention = { path = "../vakthund-prevention" }
+vakthund-protocols = { path = "../vakthund-protocols" }
+vakthund-capture = { path = "../vakthund-capture" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tracing = "0.1"
+opentelemetry = "0.27.1"
+bytes = "1.10.0"

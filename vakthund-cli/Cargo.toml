@@ -4,27 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-aho-corasick = "1.1.3"
-blake3 = { workspace = true }
-bytes = { workspace = true }
-clap = { workspace = true, features = ["derive"] }
-figment = "0.10.19"
-hex = { workspace = true }
-num_cpus = { workspace = true }
-opentelemetry = { workspace = true }
-parking_lot = { workspace = true }
-proptest = { workspace = true }
-thiserror = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"]} # Added macros and rt-multi-thread
-tracing = { workspace = true }
-tracing-attributes = { workspace = true }
-tracing-subscriber = { workspace = true }
-tracing-test = "0.2.5"
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
-vakthund-capture = { path = "../vakthund-capture/" }
-vakthund-core = { path = "../vakthund-core" }
-vakthund-detection = { path = "../vakthund-detection" }
-vakthund-prevention = { path = "../vakthund-prevention" }
-vakthund-protocols = { path = "../vakthund-protocols" }
-vakthund-simulator = { path = "../vakthund-simulator/" }
+vakthund-engine = { path = "../vakthund-engine" }
 vakthund-telemetry = { path = "../vakthund-telemetry" }
