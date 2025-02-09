@@ -16,7 +16,6 @@
 //! - `alloc`: Memory pools and arena allocators using `bumpalo`
 //! - `events`: Tokio-powered event bus with MPSC ringbuffer
 //! - `config`: Configuration loading and validation
-//! - `sim`: Deterministic simulation core with virtual clock
 //! - `network`: Network condition models (latency/jitter/packet loss)
 //! - `time`: `VirtualClock` using atomic counters + scheduler
 //!
@@ -28,7 +27,6 @@ pub mod alloc;
 pub mod config;
 pub mod events;
 pub mod network;
-pub mod sim;
 pub mod time;
 
 pub mod prelude {
@@ -36,6 +34,5 @@ pub mod prelude {
     pub use crate::config::*;
     pub use crate::events::*;
     pub use crate::network::*;
-    pub use crate::sim::*;
     pub use crate::time::*;
 }

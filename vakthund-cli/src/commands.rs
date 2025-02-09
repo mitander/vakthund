@@ -1,3 +1,5 @@
+// vakthund-cli/src/commands.rs
+
 use bytes::Bytes;
 use clap::{Args, Parser, Subcommand};
 use opentelemetry::KeyValue;
@@ -27,7 +29,7 @@ pub struct Cli {
 pub enum Commands {
     /// Run in production mode (live capture using pcap)
     Run(RunArgs),
-    /// Run deterministic simulation (using a scenario file)
+    /// Run deterministic simulation (or replay if a scenario file is provided)
     Simulate(SimulateArgs),
 }
 
@@ -58,7 +60,7 @@ pub async fn run_production_mode(
     run_args: RunArgs,
     metrics: MetricsRecorder,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let event_bus = Arc::new(EventBus::with_capacity(10_000).expect("Failed to create event bus"));
+    let event_bus = Arc::new(EventBus::with_capacity(8192).expect("Failed to create event bus"));
     let event_bus_for_processing = event_bus.share();
     let metrics_processor = metrics.clone();
 
@@ -201,7 +203,7 @@ async fn run_capture_loop(
 #[instrument(level = "debug", name = "enqueue_captured_packet", skip(event_bus))]
 fn enqueue_captured_packet(packet: &vakthund_capture::packet::Packet, event_bus: Arc<EventBus>) {
     // 1. Get a timestamp (replace with actual timestamp source)
-    let timestamp = Instant::now().elapsed().as_nanos() as u64;
+    let timestamp = std::time::Instant::now().elapsed().as_nanos() as u64;
 
     // 2. Construct the NetworkEvent
     let event = NetworkEvent::new(timestamp, Bytes::from(packet.data.clone()));
@@ -226,28 +228,57 @@ fn enqueue_captured_packet(packet: &vakthund_capture::packet::Packet, event_bus:
     info!("Captured packet with {} bytes", packet_size);
 }
 
-/// Simulation mode: run the simulator for a given number of events.
+/// Simulation mode: run the simulator for a given number of events or replay a scenario if provided.
 #[instrument(level = "info", name = "run_simulation_mode", skip(metrics))]
 pub async fn run_simulation_mode(
     sim_args: SimulateArgs,
     metrics: MetricsRecorder,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     metrics.processed_events.inc();
-
-    let mut simulator = Simulator::new(sim_args.seed, false);
-    let final_hash = simulator.run(sim_args.events);
-    println!("Simulation complete. State hash: {}", final_hash);
-    if let Some(expected_hash) = sim_args.validate_hash {
-        assert_eq!(final_hash, expected_hash, "State hash mismatch!");
+    if sim_args.scenario.exists() {
+        // Use ReplayEngine from vakthund-simulator/replay
+        println!("Replaying scenario from file: {:?}", sim_args.scenario);
+        let scenario =
+            match vakthund_simulator::replay::Scenario::load_from_file(&sim_args.scenario) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Failed to load scenario: {:?}", e);
+                    return Err(Box::new(e));
+                }
+            };
+        let clock = vakthund_core::time::VirtualClock::new(sim_args.seed);
+        let replay_engine = vakthund_simulator::replay::ReplayEngine::new(scenario, clock);
+        // For this stub, we simply iterate through the replayed events.
+        while let Some(_event) = replay_engine.next_event().await {
+            // Here you could process each event as needed.
+        }
+        let final_hash = "replay_dummy_hash".to_string();
+        println!("Replay complete. State hash: {}", final_hash);
+        EventLogger::log_event(
+            "replay_complete",
+            vec![
+                KeyValue::new("seed", sim_args.seed.to_string()),
+                KeyValue::new("final_hash", final_hash.clone()),
+            ],
+        )
+        .await;
+    } else {
+        // No scenario file provided, run standard simulation.
+        let mut simulator = Simulator::new(sim_args.seed, false);
+        let final_hash = simulator.run(sim_args.events);
+        println!("Simulation complete. State hash: {}", final_hash);
+        if let Some(expected_hash) = sim_args.validate_hash {
+            assert_eq!(final_hash, expected_hash, "State hash mismatch!");
+        }
+        EventLogger::log_event(
+            "simulation_complete",
+            vec![
+                KeyValue::new("event_count", sim_args.events.to_string()),
+                KeyValue::new("seed", sim_args.seed.to_string()),
+                KeyValue::new("final_hash", final_hash.clone()),
+            ],
+        )
+        .await;
     }
-    EventLogger::log_event(
-        "simulation_complete",
-        vec![
-            KeyValue::new("event_count", sim_args.events.to_string()),
-            KeyValue::new("seed", sim_args.seed.to_string()),
-            KeyValue::new("final_hash", final_hash.clone()),
-        ],
-    )
-    .await;
     Ok(())
 }
