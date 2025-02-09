@@ -15,3 +15,7 @@ concurrent-queue = "2.5.0"
 serde = { version = "1.0", features = ["derive"] } # Added serde for config
 serde_yaml = "0.9" # Added yaml format
 criterion = "0.5.1"
+
+[[bench]]
+name = "event_bus_bench"
+harness = false

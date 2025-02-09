@@ -6,7 +6,7 @@ use criterion::Criterion;
 
 use vakthund_core::events::{EventBus, NetworkEvent};
 
-fn bench_event_bus_push_pop(c: &mut Criterion) {
+fn benchmark_event_bus_throughput(c: &mut Criterion) {
     let mut group = c.benchmark_group("event_bus_throughput");
 
     for capacity in [128, 1024, 16384] {
@@ -28,5 +28,5 @@ fn bench_event_bus_push_pop(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_event_bus_push_pop);
+criterion_group!(benches, benchmark_event_bus_throughput);
 criterion_main!(benches);
