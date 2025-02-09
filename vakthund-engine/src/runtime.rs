@@ -1,13 +1,9 @@
 //! # Runtime Engine
 //!
-//! This module provides the core runtime functionality for Vakthund,
-//! including production (live capture) and simulation modes. It now loads
-//! configuration settings from YAML files so that external parameters such as
-//! event bus capacity, telemetry settings, and capture parameters can be adjusted
-//! without recompiling the code.
-//!
-//! Production mode loads its configuration from `config/production.yaml`,
-//! while simulation mode loads from `config.yaml`.
+//! This module provides the core runtime functionality for Vakthund
+//! - production mode
+//! - simulation mode
+//! - replay mode with scenarios
 
 use std::fs::File;
 use std::io::Write;
@@ -135,25 +131,26 @@ pub async fn run_simulation_mode<P: AsRef<Path> + std::fmt::Debug>(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Load simulation configuration.
     let config_path = "config/sim_config.yaml";
-    let runtime_config: RuntimeConfig = load(config_path).unwrap_or_else(|_| {
-        panic!(
-            "Failed to load simulation configuration from {}",
-            config_path
-        )
-    });
-    info!("Loaded simulation configuration: {:?}", runtime_config);
+    let sim_config =
+        vakthund_simulator::config::load_sim_config(config_path).unwrap_or_else(|_| {
+            panic!(
+                "Failed to load simulation configuration from {}",
+                config_path
+            )
+        });
+    info!("Loaded simulation configuration: {:?}", sim_config);
 
     metrics.processed_events.inc();
 
     if let Some(path) = scenario_path {
-        // Replay mode
+        // Replay mode remains unchanged.
         info!("Replaying scenario from file: {:?}", path.as_ref());
         let scenario = match vakthund_simulator::replay::Scenario::load_from_file(path) {
             Ok(s) => s,
             Err(e) => {
                 generate_bug_report(&format!(
                     "Failed to load scenario.\nError: {:?}\nConfiguration: {:?}",
-                    e, runtime_config
+                    e, sim_config
                 ));
                 return Err(Box::new(e));
             }
@@ -173,16 +170,60 @@ pub async fn run_simulation_mode<P: AsRef<Path> + std::fmt::Debug>(
             ],
         )
         .await;
+        Ok(())
     } else {
-        // Regular simulation mode
-        let mut simulator = vakthund_simulator::Simulator::new(seed, false);
-        let final_hash = simulator.run(num_events);
+        let effective_seed = if seed != 0 {
+            seed
+        } else {
+            sim_config.capture.seed
+        };
+        let effective_latency = sim_config.capture.latency_ms.unwrap_or(100);
+        let effective_jitter = sim_config.capture.jitter_ms.unwrap_or(10);
+        let event_bus_capacity = sim_config.event_bus_capacity.unwrap_or(4096);
+
+        // Create an event bus for simulation events.
+        let event_bus = Arc::new(
+            EventBus::with_capacity(event_bus_capacity)
+                .expect("Failed to create event bus with configured capacity"),
+        );
+
+        let event_bus_sim: Arc<EventBus> = event_bus.share().into();
+        let event_bus_processing: Arc<EventBus> = event_bus.share().into();
+
+        // Create the simulator, injecting the event bus.
+        let mut simulator = vakthund_simulator::Simulator::new(
+            effective_seed,
+            false,
+            effective_latency,
+            effective_jitter,
+            Some(event_bus),
+        );
+        // Spawn the event processing task.
+        let metrics_processor = metrics.clone();
+        let processor_handle = tokio::spawn(
+            async move { process_events_from_bus(event_bus_processing, metrics_processor).await }
+                .instrument(tracing::info_span!("event_processor_task")),
+        );
+
+        // Spawn a task to simulate events and push them into the event bus.
+        let simulator_handle = tokio::spawn(async move {
+            for event_id in 0..num_events {
+                if let Some(event) = simulator.simulate_event(event_id) {
+                    blocking_push(&event_bus_sim, event)
+                }
+            }
+            // Return the final state hash.
+            hex::encode(simulator.state_hasher.finalize().as_bytes())
+        });
+
+        let final_hash = simulator_handle.await.unwrap();
+        processor_handle.await??;
         println!("Simulation complete. State hash: {}", final_hash);
         if let Some(expected) = validate_hash {
             if final_hash != expected {
                 generate_bug_report(&format!(
                     "Simulation error: state hash mismatch!\nExpected: {}\nGot: {}\nConfiguration: {:?}",
-                    expected, final_hash, runtime_config
+                    expected, final_hash, sim_config
                 ));
                 return Err(Box::new(std::io::Error::new(
                     std::io::ErrorKind::Other,
@@ -194,13 +235,13 @@ pub async fn run_simulation_mode<P: AsRef<Path> + std::fmt::Debug>(
             "simulation_complete",
             vec![
                 KeyValue::new("event_count", num_events.to_string()),
-                KeyValue::new("seed", seed.to_string()),
+                KeyValue::new("seed", effective_seed.to_string()),
                 KeyValue::new("final_hash", final_hash.clone()),
             ],
         )
         .await;
+        Ok(())
     }
-    Ok(())
 }
 
 /// Internal function that continuously processes events from the event bus.
@@ -222,6 +263,7 @@ async fn process_events_from_bus(
 
     while let Some(event) = event_bus.try_pop() {
         process_network_event(event, &parser, &signature_engine, &metrics).await;
+        println!("processed event");
     }
     Ok(())
 }
@@ -338,8 +380,22 @@ async fn run_capture_loop(
 fn push_captured_packet(packet: &vakthund_capture::packet::Packet, event_bus: Arc<EventBus>) {
     let timestamp = Instant::now().elapsed().as_nanos() as u64;
     let event = NetworkEvent::new(timestamp, Bytes::from(packet.data.clone()));
-    if let Err(e) = event_bus.try_push(event) {
-        error!("Failed to push packet: {:?}", e);
-    }
+    blocking_push(&event_bus, event);
     info!("Captured packet with {} bytes", packet.data.len());
+}
+
+fn blocking_push(event_bus: &Arc<EventBus>, event: NetworkEvent) {
+    use vakthund_core::events::bus::EventError;
+    loop {
+        match event_bus.try_push(event.clone()) {
+            Ok(_) => break,
+            Err(EventError::QueueFull) => {
+                std::thread::yield_now();
+            }
+            Err(e) => {
+                error!("Unexpected error during blocking push: {:?}", e);
+                break;
+            }
+        }
+    }
 }

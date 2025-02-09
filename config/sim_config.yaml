@@ -1,10 +1,20 @@
+# Simulation configuration for Vakthund
+
+# Capture settings (used for simulation; some fields are informational)
 capture:
-  mode: "simulation"         # Allowed values: "live" or "simulation"
+  mode: "simulation"
   interface: "en0"
   buffer_size: 1048576
   promiscuous: true
   seed: 42
+  latency_ms: 100    # Fixed latency (in milliseconds)
+  jitter_ms: 10      # Maximum jitter (in milliseconds)
 
+# Simulation-specific event bus capacity.
+# Increase this value for long-running simulations.
+event_bus_capacity: 16384
+
+# Monitor settings and alerts (if applicable)
 monitor:
   quarantine_timeout: 600
   thresholds:
