@@ -8,10 +8,10 @@ members = [
     "vakthund-protocols",
     "vakthund-telemetry",
     "vakthund-simulator",
-    # "vakthund-dashboard",
     "vakthund-cli",
     "vakthund-capture",
-    # "benches",
+
+    # FUTURE:
     # "tests/integration",
     # "tests/scenarios",
     # "tests/fuzz",

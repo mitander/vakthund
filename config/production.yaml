@@ -1,8 +1,0 @@
-event_bus:
-  capacity: 4096    # Must be a power of two
-  require_power_of_two: true # Verify that capacity is a power of two
-
-telemetry:
-  metrics_addr: "0.0.0.0:9090"  # Expose metrics endpoint
-  log_level: "info"             # Default logging level
-  enable_otel: true             # Enable distributed tracing

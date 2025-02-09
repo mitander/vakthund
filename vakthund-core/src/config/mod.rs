@@ -6,6 +6,7 @@ pub mod runtime;
 pub mod telemetry;
 
 pub use runtime::RuntimeConfig;
+use std::path::Path;
 pub use telemetry::TelemetryConfig;
 
 use std::path::PathBuf;
@@ -32,10 +33,10 @@ pub enum ConfigError {
 /// # Arguments
 ///
 /// * `path` - Path to the YAML configuration file.
-pub fn load(path: impl AsRef<PathBuf>) -> Result<RuntimeConfig, ConfigError> {
+pub fn load<P: AsRef<Path>>(path: P) -> Result<RuntimeConfig, ConfigError> {
     let path = path.as_ref();
     if !path.exists() {
-        return Err(ConfigError::FileNotFound(path.clone()));
+        return Err(ConfigError::FileNotFound(path.into()));
     }
 
     let content = std::fs::read_to_string(path)?;

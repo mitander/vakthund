@@ -1,13 +1,13 @@
-// vakthund-core/src/engine/runtime.rs
-
-/*!
-# Runtime Engine
-
-This module provides the core runtime functionality for Vakthund,
-including the production mode (live capture) and the simulation mode.
-This abstraction lets different frontends (CLI, GUI, web) share the same
-implementation of event processing, simulation, and error reporting.
-*/
+//! # Runtime Engine
+//!
+//! This module provides the core runtime functionality for Vakthund,
+//! including production (live capture) and simulation modes. It now loads
+//! configuration settings from YAML files so that external parameters such as
+//! event bus capacity, telemetry settings, and capture parameters can be adjusted
+//! without recompiling the code.
+//!
+//! Production mode loads its configuration from `config/production.yaml`,
+//! while simulation mode loads from `config.yaml`.
 
 use std::fs::File;
 use std::io::Write;
@@ -15,47 +15,91 @@ use std::net::Ipv4Addr;
 use std::path::Path;
 use std::sync::{atomic::AtomicBool, Arc};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use tracing::Instrument;
 
 use bytes::Bytes;
 use opentelemetry::KeyValue;
-use tracing::{error, info, instrument};
-
-use vakthund_core::events::{EventBus, NetworkEvent};
-use vakthund_core::time::VirtualClock;
+use tracing::{error, info, instrument, Instrument};
 
 use vakthund_capture::capture;
+use vakthund_core::{
+    config::{load, RuntimeConfig},
+    events::{bus::EventBus, network::NetworkEvent},
+    time::VirtualClock,
+};
 use vakthund_detection::signatures::SignatureEngine;
 use vakthund_prevention::firewall::Firewall;
 use vakthund_protocols::mqtt::MqttParser;
 use vakthund_telemetry::{logging::EventLogger, metrics::MetricsRecorder};
 
-/// Runs the production mode using live capture (pcap).
+/// Generates a bug report file with the given report details.
+/// This function is used when a fatal error (such as a state hash mismatch)
+/// is encountered.
+fn generate_bug_report(report: &str) {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let filename = format!("bug_report_{}.txt", now);
+    match File::create(&filename) {
+        Ok(mut file) => {
+            if let Err(e) = file.write_all(report.as_bytes()) {
+                eprintln!("Failed to write bug report: {:?}", e);
+            } else {
+                println!("Bug report written to {}", filename);
+            }
+        }
+        Err(e) => eprintln!("Failed to create bug report file: {:?}", e),
+    }
+}
+
+/// Runs production (live capture) mode.
+/// Loads configuration from `"config/production.yaml"` and uses the specified
+/// settings for event bus capacity, telemetry, etc.
+///
+/// # Arguments
+/// * `interface` - The network interface to capture on.
+/// * `metrics` - The metrics recorder to be used for telemetry.
 #[instrument(level = "info", name = "run_production_mode", skip(metrics))]
 pub async fn run_production_mode(
     interface: &str,
     metrics: MetricsRecorder,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let event_bus = Arc::new(EventBus::with_capacity(10_000).expect("Failed to create event bus"));
+    // Load production configuration.
+    let config_path = "config/runtime_config.yaml";
+    let runtime_config: RuntimeConfig = load(std::path::PathBuf::from(config_path))
+        .unwrap_or_else(|_| panic!("Failed to load production config from {}", config_path));
+    info!("Loaded production configuration: {:?}", runtime_config);
+
+    // Use the event bus capacity from configuration.
+    let event_bus_capacity = runtime_config.event_bus.capacity;
+    let event_bus = Arc::new(
+        EventBus::with_capacity(event_bus_capacity)
+            .expect("Failed to create event bus with configured capacity"),
+    );
     let event_bus_for_processing = event_bus.share().into();
     let metrics_processor = metrics.clone();
 
+    // Spawn the event processing task.
     let processor_handle = tokio::spawn(
         async move { process_events_from_bus(event_bus_for_processing, metrics_processor).await }
             .instrument(tracing::info_span!("event_processor_task")),
     );
 
+    // Use a (hard‐coded or optionally configured) capture buffer size.
     let buffer_size = 1_048_576;
     let promiscuous = true;
     let terminate = Arc::new(AtomicBool::new(false));
     info!("Starting live capture on interface: {}", interface);
     let event_bus_for_capture = event_bus.share().into();
 
-    let interface_clone = interface.to_owned();
+    // Create an owned copy of the interface string so that it can be moved into the async block.
+    let interface_owned = interface.to_owned();
+
+    // Spawn the capture task.
     let capture_handle = tokio::spawn(
         async move {
             run_capture_loop(
-                interface_clone.as_str(),
+                interface_owned.as_str(),
                 buffer_size,
                 promiscuous,
                 &terminate,
@@ -66,15 +110,21 @@ pub async fn run_production_mode(
         .instrument(tracing::info_span!("capture_task")),
     );
 
+    // Wait for the processing and capture tasks to complete.
     processor_handle.await??;
     let _ = capture_handle.await?;
     Ok(())
 }
 
-/// Runs the simulation mode (or replay if a scenario file is provided).
+/// Runs simulation mode (or replay if a scenario file is provided).
+/// Loads simulation configuration from `"config.yaml"`.
 ///
-/// * `scenario_path` is an optional path to a scenario file.
-/// * If no scenario file is provided, a simulation will be run.
+/// # Arguments
+/// * `scenario_path` - Optional path to a scenario file. If provided, replay mode is used.
+/// * `num_events` - Number of events to simulate (if no scenario file is given).
+/// * `seed` - Seed for the virtual clock and randomness.
+/// * `validate_hash` - Optional expected state hash (for validation).
+/// * `metrics` - The metrics recorder for telemetry.
 #[instrument(level = "info", name = "run_simulation_mode", skip(metrics))]
 pub async fn run_simulation_mode<P: AsRef<Path> + std::fmt::Debug>(
     scenario_path: Option<P>,
@@ -83,13 +133,28 @@ pub async fn run_simulation_mode<P: AsRef<Path> + std::fmt::Debug>(
     validate_hash: Option<&str>,
     metrics: MetricsRecorder,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Load simulation configuration.
+    let config_path = "config/sim_config.yaml";
+    let runtime_config: RuntimeConfig = load(config_path).unwrap_or_else(|_| {
+        panic!(
+            "Failed to load simulation configuration from {}",
+            config_path
+        )
+    });
+    info!("Loaded simulation configuration: {:?}", runtime_config);
+
     metrics.processed_events.inc();
+
     if let Some(path) = scenario_path {
+        // Replay mode
         info!("Replaying scenario from file: {:?}", path.as_ref());
         let scenario = match vakthund_simulator::replay::Scenario::load_from_file(path) {
             Ok(s) => s,
             Err(e) => {
-                generate_bug_report(&format!("Failed to load scenario.\nError: {:?}", e));
+                generate_bug_report(&format!(
+                    "Failed to load scenario.\nError: {:?}\nConfiguration: {:?}",
+                    e, runtime_config
+                ));
                 return Err(Box::new(e));
             }
         };
@@ -109,14 +174,15 @@ pub async fn run_simulation_mode<P: AsRef<Path> + std::fmt::Debug>(
         )
         .await;
     } else {
+        // Regular simulation mode
         let mut simulator = vakthund_simulator::Simulator::new(seed, false);
         let final_hash = simulator.run(num_events);
-        info!("Simulation complete. State hash: {}", final_hash);
+        println!("Simulation complete. State hash: {}", final_hash);
         if let Some(expected) = validate_hash {
             if final_hash != expected {
                 generate_bug_report(&format!(
-                    "Simulation error: state hash mismatch!\nExpected: {}\nGot: {}",
-                    expected, final_hash
+                    "Simulation error: state hash mismatch!\nExpected: {}\nGot: {}\nConfiguration: {:?}",
+                    expected, final_hash, runtime_config
                 ));
                 return Err(Box::new(std::io::Error::new(
                     std::io::ErrorKind::Other,
@@ -137,7 +203,11 @@ pub async fn run_simulation_mode<P: AsRef<Path> + std::fmt::Debug>(
     Ok(())
 }
 
-/// Internal function to process events from the event bus.
+/// Internal function that continuously processes events from the event bus.
+///
+/// # Arguments
+/// * `event_bus` - Shared event bus handle.
+/// * `metrics` - Metrics recorder for telemetry.
 #[instrument(
     level = "debug",
     name = "process_events_from_bus",
@@ -157,6 +227,15 @@ async fn process_events_from_bus(
 }
 
 /// Internal function to process a single network event.
+///
+/// It parses the MQTT packet, measures detection latency, and if a signature match
+/// is found, triggers the detection handler.
+///
+/// # Arguments
+/// * `event` - The network event.
+/// * `parser` - The MQTT parser.
+/// * `signature_engine` - The signature engine for matching patterns.
+/// * `metrics` - Metrics recorder for telemetry.
 #[instrument(
     level = "debug",
     name = "process_network_event",
@@ -190,6 +269,10 @@ async fn process_network_event(
 }
 
 /// Internal function to handle detection events.
+/// It attempts to block an IP address (dummy implementation) and logs the event.
+///
+/// # Arguments
+/// * `metrics` - Metrics recorder for telemetry.
 #[instrument(level = "debug", name = "handle_detection_match", skip(metrics))]
 async fn handle_detection_match(metrics: &MetricsRecorder) {
     let block_result = Firewall::new("dummy_interface")
@@ -218,7 +301,14 @@ async fn handle_detection_match(metrics: &MetricsRecorder) {
     }
 }
 
-/// Internal function to run the capture loop.
+/// Internal function to run the capture loop using pcap.
+///
+/// # Arguments
+/// * `interface` - The network interface name.
+/// * `buffer_size` - Maximum capture buffer size.
+/// * `promiscuous` - Whether to run in promiscuous mode.
+/// * `terminate` - A flag that, when set, causes the capture loop to exit.
+/// * `event_bus` - The shared event bus to which captured packets are enqueued.
 #[instrument(level = "debug", name = "run_capture_loop", skip(interface, event_bus))]
 async fn run_capture_loop(
     interface: &str,
@@ -233,38 +323,23 @@ async fn run_capture_loop(
         promiscuous,
         terminate,
         &mut move |packet: &vakthund_capture::packet::Packet| {
-            enqueue_captured_packet(packet, event_bus.clone());
+            push_captured_packet(packet, event_bus.clone());
         },
     );
     Ok(())
 }
 
-/// Internal function to enqueue a captured packet.
+/// Internal function to enqueue a captured packet onto the event bus.
+///
+/// # Arguments
+/// * `packet` - The captured packet.
+/// * `event_bus` - The shared event bus.
 #[instrument(level = "debug", name = "enqueue_captured_packet", skip(event_bus))]
-fn enqueue_captured_packet(packet: &vakthund_capture::packet::Packet, event_bus: Arc<EventBus>) {
+fn push_captured_packet(packet: &vakthund_capture::packet::Packet, event_bus: Arc<EventBus>) {
     let timestamp = Instant::now().elapsed().as_nanos() as u64;
     let event = NetworkEvent::new(timestamp, Bytes::from(packet.data.clone()));
     if let Err(e) = event_bus.try_push(event) {
         error!("Failed to push packet: {:?}", e);
     }
     info!("Captured packet with {} bytes", packet.data.len());
-}
-
-/// Generates a bug report file with the given report details.
-fn generate_bug_report(report: &str) {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let filename = format!("bug_report_{}.txt", now);
-    match File::create(&filename) {
-        Ok(mut file) => {
-            if let Err(e) = file.write_all(report.as_bytes()) {
-                eprintln!("Failed to write bug report: {:?}", e);
-            } else {
-                println!("Bug report written to {}", filename);
-            }
-        }
-        Err(e) => eprintln!("Failed to create bug report file: {:?}", e),
-    }
 }

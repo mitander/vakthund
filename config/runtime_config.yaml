@@ -1,0 +1,8 @@
+event_bus:
+  capacity: 4096
+  require_power_of_two: true
+
+telemetry:
+  metrics_addr: "0.0.0.0:9090"
+  log_level: "info"
+  enable_otel: true
