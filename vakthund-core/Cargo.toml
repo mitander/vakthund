@@ -13,7 +13,7 @@ bumpalo = "3.17.0"
 rand = { version = "0.9.0", features = ["small_rng", "std"] }
 concurrent-queue = "2.5.0"
 serde = { version = "1.0", features = ["derive"] } # Added serde for config
-serde_yaml = "0.9" # Added yaml format
+serde_yaml = "0.9.34"
 criterion = "0.5.1"
 tracing = "0.1.41"
 opentelemetry = "0.27.1"
