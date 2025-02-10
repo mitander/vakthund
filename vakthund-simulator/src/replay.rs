@@ -1,19 +1,14 @@
-// vakthund-simulator/src/replay.rs
-
-/*!
-# Vakthund Replay Engine
-
-This module provides functionality to replay recorded simulation scenarios deterministically.
-It uses a virtual clock and a sequence of events with associated delays to reproduce system behavior.
-
-## Key Components:
-- `Scenario`: Represents a sequence of network events with associated delay times.
-- `NetworkEventWithDelay`: Associates a network event with a delay in nanoseconds.
-- `ReplayEngine`: Drives the replay by advancing the virtual clock and providing events in order.
-
-A simple stub function `load_from_file` is provided to load a scenario from a file.
-*/
-
+//! # Vakthund Replay Engine
+//!
+//! This module provides functionality to replay recorded simulation scenarios deterministically.
+//! It uses a virtual clock and a sequence of events with associated delays to reproduce system behavior.
+//!
+//! ## Key Components:
+//! - `Scenario`: Represents a sequence of network events with associated delay times.
+//! - `NetworkEventWithDelay`: Associates a network event with a delay in nanoseconds.
+//! - `ReplayEngine`: Drives the replay by advancing the virtual clock and providing events in order.
+//!
+//! A simple stub function `load_from_file` is provided to load a scenario from a file.
 use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};

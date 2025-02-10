@@ -1,4 +1,3 @@
-// vakthund-prevention/src/firewall/mod.rs
 //! ## vakthund-prevention::firewall
 //! **eBPF/XDP-based connection blocking**
 //!

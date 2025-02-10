@@ -1,4 +1,3 @@
-// vakthund-config/src/validation.rs
 //! Custom validation functions for configuration.
 //!
 //! Provides shared validation logic used across multiple configuration modules.

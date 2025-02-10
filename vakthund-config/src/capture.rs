@@ -1,4 +1,3 @@
-// vakthund-config/src/capture.rs
 //! Packet capture configuration for live and simulated environments.
 //!
 //! Defines parameters for network packet acquisition across different modes:
