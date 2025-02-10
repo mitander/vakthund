@@ -2,15 +2,14 @@
 extern crate criterion;
 
 use bytes::Bytes;
-use criterion::Criterion;
-
-use vakthund_core::events::{EventBus, NetworkEvent};
+use criterion::{black_box, Criterion};
+use vakthund_core::events::{bus::EventBus, network::NetworkEvent};
 
 fn benchmark_event_bus_throughput(c: &mut Criterion) {
     let mut group = c.benchmark_group("event_bus_throughput");
 
     for capacity in [128, 1024, 16384] {
-        group.throughput(criterion::Throughput::Elements(capacity as u64)); // Events per second
+        group.throughput(criterion::Throughput::Elements(capacity as u64));
         group.bench_function(format!("capacity_{}", capacity), |b| {
             let event_bus = EventBus::with_capacity(capacity).unwrap();
             let event = NetworkEvent {
@@ -20,8 +19,9 @@ fn benchmark_event_bus_throughput(c: &mut Criterion) {
                 destination: None,
             };
             b.iter(|| {
-                event_bus.try_push(event.clone()).unwrap();
-                event_bus.try_pop().unwrap();
+                // Use black_box to prevent over‑optimization.
+                black_box(event_bus.try_push(event.clone()).unwrap());
+                black_box(event_bus.try_pop().unwrap());
             });
         });
     }

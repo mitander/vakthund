@@ -1,0 +1,8 @@
+# Example scenario file for replay mode.
+# Each non‑empty line represents a delay (in nanoseconds) before the next event.
+# For instance, these values simulate delays of 1ms, 2ms, 1.5ms, and 3ms respectively.
+
+1000000
+2000000
+1500000
+3000000

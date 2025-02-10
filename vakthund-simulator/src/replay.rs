@@ -19,7 +19,8 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use vakthund_core::events::NetworkEvent;
-use vakthund_core::time::VirtualClock;
+
+use crate::virtual_clock::VirtualClock;
 
 /// Represents a network event along with a delay (in nanoseconds) before it should be processed.
 #[derive(Clone, Debug)]

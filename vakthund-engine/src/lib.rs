@@ -1,4 +1,3 @@
-pub mod config;
 pub mod runtime;
 
 // Re-export the runtime functions so frontends can simply do:

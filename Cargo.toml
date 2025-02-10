@@ -10,6 +10,7 @@ members = [
     "vakthund-simulator",
     "vakthund-cli",
     "vakthund-capture",
+    "vakthund-config"
 
     # FUTURE:
     # "tests/integration",

@@ -5,6 +5,7 @@
 //! - simulation mode
 //! - replay mode with scenarios
 
+use figment::providers::Format;
 use std::fs::File;
 use std::io::Write;
 use std::net::Ipv4Addr;
@@ -17,14 +18,16 @@ use opentelemetry::KeyValue;
 use tracing::{error, info, instrument, Instrument};
 
 use vakthund_capture::capture;
-use vakthund_core::{
-    config::{load, RuntimeConfig},
-    events::{bus::EventBus, network::NetworkEvent},
-    time::VirtualClock,
-};
+use vakthund_config::{self, SimulatorConfig, VakthundConfig};
+use vakthund_core::events::{bus::EventBus, network::NetworkEvent};
 use vakthund_detection::signatures::SignatureEngine;
 use vakthund_prevention::firewall::Firewall;
 use vakthund_protocols::mqtt::MqttParser;
+use vakthund_simulator::{
+    replay::{ReplayEngine, Scenario},
+    virtual_clock::VirtualClock,
+    Simulator,
+};
 use vakthund_telemetry::{logging::EventLogger, metrics::MetricsRecorder};
 
 /// Generates a bug report file with the given report details.
@@ -60,14 +63,13 @@ pub async fn run_production_mode(
     interface: &str,
     metrics: MetricsRecorder,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Load production configuration.
-    let config_path = "config/runtime_config.yaml";
-    let runtime_config: RuntimeConfig = load(std::path::PathBuf::from(config_path))
-        .unwrap_or_else(|_| panic!("Failed to load production config from {}", config_path));
-    info!("Loaded production configuration: {:?}", runtime_config);
+    let config_path = "config/vakthund.yaml";
+    let config = VakthundConfig::load_from_path(config_path)
+        .unwrap_or_else(|err| panic!("Failed to load configuration from {config_path}: {err}",));
+    info!("Loaded configuration: {:?}", config);
 
     // Use the event bus capacity from configuration.
-    let event_bus_capacity = runtime_config.event_bus.capacity;
+    let event_bus_capacity = config.core.event_bus.capacity;
     let event_bus = Arc::new(
         EventBus::with_capacity(event_bus_capacity)
             .expect("Failed to create event bus with configured capacity"),
@@ -81,9 +83,6 @@ pub async fn run_production_mode(
             .instrument(tracing::info_span!("event_processor_task")),
     );
 
-    // Use a (hard‐coded or optionally configured) capture buffer size.
-    let buffer_size = 1_048_576;
-    let promiscuous = true;
     let terminate = Arc::new(AtomicBool::new(false));
     info!("Starting live capture on interface: {}", interface);
     let event_bus_for_capture = event_bus.share().into();
@@ -96,8 +95,8 @@ pub async fn run_production_mode(
         async move {
             run_capture_loop(
                 interface_owned.as_str(),
-                buffer_size,
-                promiscuous,
+                config.capture.buffer_size,
+                config.capture.promiscuous,
                 &terminate,
                 event_bus_for_capture,
             )
@@ -129,34 +128,50 @@ pub async fn run_simulation_mode<P: AsRef<Path> + std::fmt::Debug>(
     validate_hash: Option<&str>,
     metrics: MetricsRecorder,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Load simulation configuration.
-    let config_path = "config/sim_config.yaml";
-    let sim_config =
-        vakthund_simulator::config::load_sim_config(config_path).unwrap_or_else(|_| {
-            panic!(
-                "Failed to load simulation configuration from {}",
-                config_path
-            )
-        });
-    info!("Loaded simulation configuration: {:?}", sim_config);
+    let config = VakthundConfig::load().expect("Configuration load failed");
+    info!("Loaded configuration: {:?}", config);
+
+    // Load the simulation-specific configuration.
+    // In this design, simulator.yaml is used for simulation overrides.
+    let sim_config: SimulatorConfig = {
+        let path = "config/simulator.yaml";
+        if Path::new(path).exists() {
+            figment::Figment::new()
+                .merge(figment::providers::Yaml::file(path))
+                .extract()?
+        } else {
+            SimulatorConfig {
+                seed: 42,
+                event_count: 10000,
+                chaos: vakthund_config::ChaosConfig {
+                    fault_probability: 0.0,
+                },
+                network: vakthund_config::NetworkModelConfig {
+                    latency_ms: 0,
+                    jitter_ms: 0,
+                },
+            }
+        }
+    };
+    info!("Loaded simulation configuration: {:?}", config);
 
     metrics.processed_events.inc();
 
     if let Some(path) = scenario_path {
         // Replay mode remains unchanged.
         info!("Replaying scenario from file: {:?}", path.as_ref());
-        let scenario = match vakthund_simulator::replay::Scenario::load_from_file(path) {
+        let scenario = match Scenario::load_from_file(path) {
             Ok(s) => s,
             Err(e) => {
                 generate_bug_report(&format!(
                     "Failed to load scenario.\nError: {:?}\nConfiguration: {:?}",
-                    e, sim_config
+                    e, config
                 ));
                 return Err(Box::new(e));
             }
         };
         let clock = VirtualClock::new(seed);
-        let replay_engine = vakthund_simulator::replay::ReplayEngine::new(scenario, clock);
+        let replay_engine = ReplayEngine::new(scenario, clock);
         while let Some(_event) = replay_engine.next_event().await {
             // Process replayed events as needed.
         }
@@ -172,33 +187,23 @@ pub async fn run_simulation_mode<P: AsRef<Path> + std::fmt::Debug>(
         .await;
         Ok(())
     } else {
-        let effective_seed = if seed != 0 {
-            seed
-        } else {
-            sim_config.capture.seed
-        };
-        let effective_latency = sim_config.capture.latency_ms.unwrap_or(100);
-        let effective_jitter = sim_config.capture.jitter_ms.unwrap_or(10);
-        let event_bus_capacity = sim_config.event_bus_capacity.unwrap_or(4096);
-
-        // Create an event bus for simulation events.
         let event_bus = Arc::new(
-            EventBus::with_capacity(event_bus_capacity)
+            EventBus::with_capacity(config.core.event_bus.capacity)
                 .expect("Failed to create event bus with configured capacity"),
         );
-
         let event_bus_sim: Arc<EventBus> = event_bus.share().into();
         let event_bus_processing: Arc<EventBus> = event_bus.share().into();
 
-        // Create the simulator, injecting the event bus.
-        let mut simulator = vakthund_simulator::Simulator::new(
+        let effective_seed = if seed != 0 { seed } else { sim_config.seed };
+
+        let mut simulator = Simulator::new(
             effective_seed,
-            false,
-            effective_latency,
-            effective_jitter,
+            sim_config.chaos.fault_probability > 0.0,
+            sim_config.network.latency_ms,
+            sim_config.network.jitter_ms,
             Some(event_bus),
         );
-        // Spawn the event processing task.
+
         let metrics_processor = metrics.clone();
         let processor_handle = tokio::spawn(
             async move { process_events_from_bus(event_bus_processing, metrics_processor).await }
@@ -223,7 +228,7 @@ pub async fn run_simulation_mode<P: AsRef<Path> + std::fmt::Debug>(
             if final_hash != expected {
                 generate_bug_report(&format!(
                     "Simulation error: state hash mismatch!\nExpected: {}\nGot: {}\nConfiguration: {:?}",
-                    expected, final_hash, sim_config
+                    expected, final_hash, config
                 ));
                 return Err(Box::new(std::io::Error::new(
                     std::io::ErrorKind::Other,

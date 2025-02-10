@@ -1,70 +1,50 @@
-// vakthund-simulator/src/lib.rs
-
-/*!
-# Vakthund Simulator
-
-The Vakthund Simulator provides a deterministic simulation and replay engine for the Vakthund IDPS.
-It leverages virtual time, network condition emulation (latency, jitter, and packet loss), and optional fault injection
-to enable reproducible testing and debugging of intrusion detection/prevention scenarios.
-
-## Key Components:
-- **Virtual Clock:** Simulated time with nanosecond precision.
-- **Memory Allocator:** Arena allocator for zero‑copy event buffers.
-- **Network Models:** Fixed latency, random jitter, and packet loss simulation.
-- **Chaos Engine:** Optional fault injection for robustness testing.
-- **Replay Engine:** Deterministic replay of recorded scenarios.
-*/
-
-use rand::Rng;
-use std::sync::Arc;
-use std::time::Duration;
+//! # Vakthund Simulator
+//!
+//! Provides a deterministic simulation engine for Vakthund.
+//!
+//! This module uses simulation‑only components (virtual clock and network simulation)
+//! and shares the production event bus and event type from `vakthund-core`.
 
 use blake3::Hasher;
 use bytes::Bytes;
+use std::sync::Arc;
+use std::time::Duration;
 
-use vakthund_core::alloc::arena::ArenaAllocator;
-use vakthund_core::events::NetworkEvent;
-use vakthund_core::network::jitter::{JitterModel, RandomJitterModel};
-use vakthund_core::network::latency::{FixedLatencyModel, LatencyModel};
-use vakthund_core::network::packet_loss::{NoPacketLossModel, PacketLossModel};
-use vakthund_core::time::VirtualClock;
+// Import our simulation modules:
+pub mod virtual_clock;
+pub use virtual_clock::VirtualClock;
+
+pub mod network_simulation;
+pub use network_simulation::jitter::{JitterModel, RandomJitterModel};
+pub use network_simulation::latency::{FixedLatencyModel, LatencyModel};
+pub use network_simulation::packet_loss::{NoPacketLossModel, PacketLossModel};
+pub use vakthund_config::SimulatorConfig;
 
 pub mod chaos;
 pub mod cli;
-pub mod config;
 pub mod replay;
 
-/// The Simulator ties together the virtual clock, memory allocation, network simulation models, and optional chaos injection to simulate event processing.
-///
-/// # Fields
-/// - `clock`: Virtual clock for deterministic simulation.
-/// - `allocator`: Arena allocator for zero‑copy event buffers.
-/// - `latency_model`: Fixed latency model to simulate network delay.
-/// - `jitter_model`: Random jitter model for simulating latency variability.
-/// - `packet_loss`: Packet loss model for simulating network packet drops.
-/// - `state_hasher`: BLAKE3 hasher to record deterministic system state.
-/// - `chaos_enabled`: Flag to enable fault injection.
-/// The Simulator ties together the virtual clock, memory allocation, network simulation models,
-/// and optional chaos injection to simulate event processing.
+/// The Simulator ties together simulation‐specific components.
 pub struct Simulator {
     clock: VirtualClock,
-    allocator: ArenaAllocator,
     latency_model: FixedLatencyModel,
     jitter_model: RandomJitterModel,
     packet_loss: Box<dyn PacketLossModel + Send>,
     pub state_hasher: Hasher,
     chaos_enabled: bool,
+    /// Shared event bus from production (using vakthund-core’s bus).
     event_bus: Option<Arc<vakthund_core::events::bus::EventBus>>,
 }
 
 impl Simulator {
-    /// Creates a new Simulator instance.
+    /// Creates a new Simulator.
     ///
-    /// * `seed` - Seed value for the virtual clock and randomness.
-    /// * `jhaos_enabled` - Enable fault injection.
-    /// * `event_bus` - Optional shared event bus. If provided, simulated events will be enqueued.
-    /// * `latency_ms` - Configurable latency
-    /// * `jitter` - Configurable jitter
+    /// # Arguments
+    /// * `seed` - Seed for the virtual clock.
+    /// * `chaos_enabled` - Enable fault injection.
+    /// * `latency_ms` - Fixed network latency (ms).
+    /// * `jitter_ms` - Maximum jitter (ms).
+    /// * `event_bus` - Optional shared event bus.
     pub fn new(
         seed: u64,
         chaos_enabled: bool,
@@ -74,7 +54,6 @@ impl Simulator {
     ) -> Self {
         Self {
             clock: VirtualClock::new(seed),
-            allocator: ArenaAllocator::new(),
             latency_model: FixedLatencyModel::new(latency_ms),
             jitter_model: RandomJitterModel::new(jitter_ms),
             packet_loss: Box::new(NoPacketLossModel),
@@ -84,17 +63,18 @@ impl Simulator {
         }
     }
 
-    /// Sets the packet loss model to simulate network packet drops.
+    /// Allows replacing the packet loss model.
     pub fn set_packet_loss_model(&mut self, model: Box<dyn PacketLossModel + Send>) {
         self.packet_loss = model;
     }
 
     /// Simulates a single event.
-    /// Instead of directly updating the state hasher, if an event bus is provided,
-    /// the event is pushed onto the bus using a blocking push.
-    pub fn simulate_event(&mut self, event_id: usize) -> Option<NetworkEvent> {
-        let event_content = format!("Event {}", event_id);
-        let event_str = self.allocator.allocate(event_content);
+    /// Returns an event of type `vakthund_core::events::network::NetworkEvent`.
+    pub fn simulate_event(
+        &mut self,
+        event_id: usize,
+    ) -> Option<vakthund_core::events::network::NetworkEvent> {
+        let mut event_content = format!("Event {}", event_id);
 
         // Simulate packet loss.
         if self.packet_loss.should_drop() {
@@ -103,56 +83,56 @@ impl Simulator {
         }
 
         // Simulate network delay.
-        let base_delay_ns = 100_000_000; // 100ms in nanoseconds.
-        let base_delay = Duration::from_nanos(base_delay_ns);
+        let base_delay = Duration::from_nanos(100_000_000); // 100ms in ns
         let delay = self.latency_model.apply_latency(base_delay);
         let jitter = self.jitter_model.apply_jitter(Duration::from_nanos(0));
         let total_delay = delay + jitter;
         self.clock.advance(total_delay.as_nanos() as u64);
 
-        // Optionally inject a fault.
-        if self.chaos_enabled && rand::rng().random_bool(0.1) {
-            crate::chaos::inject_fault(event_str);
+        // Optionally inject chaos.
+        if self.chaos_enabled && rand::random::<f64>() < 0.1 {
+            chaos::inject_fault(&mut event_content);
         }
 
-        // Create a new NetworkEvent with the current clock time.
-        let event = NetworkEvent::new(self.clock.now_ns(), Bytes::from(event_str.clone()));
+        // Create a NetworkEvent from vakthund-core.
+        let event = vakthund_core::events::network::NetworkEvent::new(
+            self.clock.now_ns(),
+            Bytes::from(event_content.clone()),
+        );
 
-        // If an event bus is provided, use blocking_push to enqueue the event.
+        // If an event bus is provided, push the event.
         if let Some(ref bus) = self.event_bus {
             blocking_push(bus, event.clone());
-        } else {
-            // Fallback: update the state hasher directly.
-            self.state_hasher.update(event_str.as_bytes());
         }
 
+        // Update state hash.
+        self.state_hasher.update(event_content.as_bytes());
         Some(event)
     }
 
-    /// Runs the simulation for a given number of events.
+    /// Runs the simulation for a fixed number of events.
     /// Returns the final state hash as a hex string.
     pub fn run(&mut self, event_count: usize) -> String {
         for event_id in 0..event_count {
-            self.simulate_event(event_id);
+            let _ = self.simulate_event(event_id);
         }
         hex::encode(self.state_hasher.finalize().as_bytes())
     }
 }
 
-/// A helper function that attempts a blocking push into the event bus.
-/// It repeatedly calls `try_push` until the event is successfully enqueued.
-fn blocking_push(event_bus: &Arc<vakthund_core::events::bus::EventBus>, event: NetworkEvent) {
+/// Helper function to perform a blocking push on the event bus.
+fn blocking_push(
+    event_bus: &Arc<vakthund_core::events::bus::EventBus>,
+    event: vakthund_core::events::network::NetworkEvent,
+) {
     use vakthund_core::events::bus::EventError;
     loop {
         match event_bus.try_push(event.clone()) {
             Ok(_) => break,
             Err(EventError::QueueFull) => {
-                // Yield to allow the event processor to catch up.
                 std::thread::yield_now();
             }
-            Err(e) => {
-                panic!("Failed to push simulated event: {:?}", e);
-            }
+            Err(e) => panic!("Failed to push simulated event: {:?}", e),
         }
     }
 }
@@ -160,12 +140,35 @@ fn blocking_push(event_bus: &Arc<vakthund_core::events::bus::EventBus>, event: N
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vakthund_core::events::bus::EventBus;
 
     #[test]
-    fn test_simulator_runs() {
-        // For testing simulation, we supply no event bus.
-        let mut simulator = Simulator::new(42, true, 0, 0, None);
-        let hash = simulator.run(5);
-        assert!(!hash.is_empty());
+    fn test_simulate_event_without_bus() {
+        let mut simulator = Simulator::new(42, false, 100, 20, None);
+        let event = simulator.simulate_event(1);
+        assert!(event.is_some());
+        let e = event.unwrap();
+        // Ensure the timestamp is greater than the seed.
+        assert!(e.timestamp > 42);
+    }
+
+    #[test]
+    fn test_simulate_event_with_bus() {
+        let bus = EventBus::with_capacity(8).unwrap();
+        let bus_arc = Arc::new(bus);
+        let mut simulator = Simulator::new(42, false, 100, 20, Some(Arc::clone(&bus_arc)));
+        let event = simulator.simulate_event(2);
+        assert!(event.is_some());
+        // After pushing, the bus should have an event.
+        let popped = bus_arc.try_pop();
+        assert!(popped.is_some());
+    }
+
+    #[test]
+    fn test_run_simulation() {
+        let mut simulator = Simulator::new(42, false, 100, 20, None);
+        let final_hash = simulator.run(10);
+        // Expect a nonempty hash string.
+        assert!(!final_hash.is_empty());
     }
 }

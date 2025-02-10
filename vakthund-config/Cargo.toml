@@ -1,0 +1,20 @@
+[package]
+name = "vakthund-config"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+figment = { version = "0.10.19", features = ["yaml", "env", "json"] }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0.11"
+validator = { version = "0.20.0", features = ["validator_derive", "derive"] }
+ipnetwork = { version = "0.21.1", features = ["serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+regex = "1"
+lazy_static = "1.4.0"
+num_cpus = "1.16.0"
+
+[features]
+simulation = ["figment/json"]
+production = []
+

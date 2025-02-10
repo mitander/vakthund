@@ -1,0 +1,50 @@
+# Production configuration for Vakthund IDPS
+
+core:
+  event_bus:
+    capacity: 4096
+    require_power_of_two: true
+    num_consumers: 4
+    on_full: yield
+
+  memory:
+    arena_chunk_size: 65536
+    packet_pool:
+      initial_capacity: 8192
+      max_packet_size: 1514
+
+# Packet capture settings
+capture:
+  mode: xdp
+  interface: eth0
+  promiscuous: true
+  buffer_size: "1MiB"
+  max_latency_ms: 100
+
+# Detection engine parameters
+detection:
+  signatures:
+    path: "/etc/vakthund/signatures"
+    update_interval: "1h"
+  anomaly:
+    window_size: 5000
+    threshold: 3.5
+
+# Prevention system config
+prevention:
+  firewall:
+    interface: eth0
+    max_rules: 10000
+    default_policy: block
+  rate_limits:
+    max_connections: "1000/s"
+    burst_size: 5000
+
+# Telemetry and monitoring
+telemetry:
+  metrics:
+    port: 9090
+    interval: "5s"
+  logging:
+    level: info
+    format: json

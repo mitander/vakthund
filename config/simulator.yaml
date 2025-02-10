@@ -1,0 +1,13 @@
+# Simulator configuration for Vakthund.
+# These settings override production defaults in simulation/replay mode.
+
+seed: 123
+event_count: 5000
+
+chaos:
+  fault_probability: 0.2
+
+network:
+  latency_ms: 100
+  jitter_ms: 20
+

@@ -13,8 +13,9 @@ fn benchmark_simulation_throughput(c: &mut Criterion) {
 
     c.bench_function("simulation_throughput", |b| {
         b.iter(|| {
-            // black_box ensures that the compiler does not optimize away the simulation
-            let mut simulator = Simulator::new(seed, false);
+            // Create the Simulator with fixed latency and jitter parameters.
+            let mut simulator = Simulator::new(seed, false, 100, 20, None);
+            // Use black_box to ensure the result is not optimized away.
             black_box(simulator.run(num_events));
         })
     });
