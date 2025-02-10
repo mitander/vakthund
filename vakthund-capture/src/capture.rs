@@ -37,7 +37,7 @@ pub fn run<F>(
         match cap.next_packet() {
             Ok(packet) => {
                 let pkt = Packet {
-                    data: packet.data.to_vec(),
+                    data: packet.data.to_vec().into(),
                 };
                 callback(&pkt);
             }
