@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use validator::{self, Validate};
 
-#[derive(Default, Debug, Serialize, Deserialize, Validate, Clone)]
+#[derive(Debug, Serialize, Deserialize, Validate, Clone)]
 pub struct SimulatorConfig {
     /// Seed for deterministic simulation.
     pub seed: u64,
@@ -18,6 +18,22 @@ pub struct SimulatorConfig {
     /// Network emulation parameters.
     #[serde(default)]
     pub network: NetworkModelConfig,
+}
+
+impl Default for SimulatorConfig {
+    fn default() -> Self {
+        Self {
+            seed: 42,
+            event_count: 10000,
+            chaos: ChaosConfig {
+                fault_probability: 0.0,
+            },
+            network: NetworkModelConfig {
+                latency_ms: 0,
+                jitter_ms: 0,
+            },
+        }
+    }
 }
 
 #[derive(Default, Debug, Serialize, Deserialize, Validate, Clone)]

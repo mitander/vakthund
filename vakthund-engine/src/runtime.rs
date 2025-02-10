@@ -5,7 +5,6 @@
 //! - simulation mode
 //! - replay mode with scenarios
 
-use figment::providers::Format;
 use std::fs::File;
 use std::io::Write;
 use std::net::Ipv4Addr;
@@ -13,7 +12,7 @@ use std::path::Path;
 use std::sync::{atomic::AtomicBool, Arc};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use bytes::Bytes;
+use figment::providers::Format;
 use opentelemetry::KeyValue;
 use tracing::{error, info, instrument, Instrument};
 
@@ -140,17 +139,7 @@ pub async fn run_simulation_mode<P: AsRef<Path> + std::fmt::Debug>(
                 .merge(figment::providers::Yaml::file(path))
                 .extract()?
         } else {
-            SimulatorConfig {
-                seed: 42,
-                event_count: 10000,
-                chaos: vakthund_config::ChaosConfig {
-                    fault_probability: 0.0,
-                },
-                network: vakthund_config::NetworkModelConfig {
-                    latency_ms: 0,
-                    jitter_ms: 0,
-                },
-            }
+            SimulatorConfig::default()
         }
     };
     info!("Loaded simulation configuration: {:?}", config);
@@ -218,7 +207,7 @@ pub async fn run_simulation_mode<P: AsRef<Path> + std::fmt::Debug>(
                 }
             }
             // Return the final state hash.
-            hex::encode(simulator.state_hasher.finalize().as_bytes())
+            simulator.finalize_hash()
         });
 
         let final_hash = simulator_handle.await.unwrap();
@@ -384,7 +373,7 @@ async fn run_capture_loop(
 #[instrument(level = "debug", name = "enqueue_captured_packet", skip(event_bus))]
 fn push_captured_packet(packet: &vakthund_capture::packet::Packet, event_bus: Arc<EventBus>) {
     let timestamp = Instant::now().elapsed().as_nanos() as u64;
-    let event = NetworkEvent::new(timestamp, Bytes::from(packet.data.clone()));
+    let event = NetworkEvent::new(timestamp, packet.data.clone());
     blocking_push(&event_bus, event);
     info!("Captured packet with {} bytes", packet.data.len());
 }

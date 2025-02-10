@@ -30,7 +30,7 @@ pub struct Simulator {
     latency_model: FixedLatencyModel,
     jitter_model: RandomJitterModel,
     packet_loss: Box<dyn PacketLossModel + Send>,
-    pub state_hasher: Hasher,
+    state_hasher: Hasher,
     chaos_enabled: bool,
     /// Shared event bus from production (using vakthund-core’s bus).
     event_bus: Option<Arc<vakthund_core::events::bus::EventBus>>,
@@ -61,6 +61,13 @@ impl Simulator {
             chaos_enabled,
             event_bus,
         }
+    }
+
+    // Finalize and consume the hasher
+    pub fn finalize_hash(&mut self) -> String {
+        // Finalize consumes the hasher; the output is an owned value.
+        let output = self.state_hasher.finalize();
+        hex::encode(output.as_bytes())
     }
 
     /// Allows replacing the packet loss model.
@@ -116,7 +123,7 @@ impl Simulator {
         for event_id in 0..event_count {
             let _ = self.simulate_event(event_id);
         }
-        hex::encode(self.state_hasher.finalize().as_bytes())
+        self.finalize_hash()
     }
 }
 
