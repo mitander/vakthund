@@ -5,4 +5,12 @@ edition = "2021"
 
 [dependencies]
 bytes = { workspace = true }
+thiserror = { workspace = true }
 hex = "0.4.3"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "protocol_parsing_bench"
+harness = false
