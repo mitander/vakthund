@@ -2,9 +2,16 @@
 //!
 //! **Deprecated:** Simulation‑specific configuration is now handled in the vakthund‑simulator crate.
 //! This module remains only as a stub for backward compatibility.
+use std::path::Path;
+use std::path::PathBuf;
 
+use figment::providers::Format;
+use figment::providers::Yaml;
+use figment::Figment;
 use serde::{Deserialize, Serialize};
 use validator::{self, Validate};
+
+use crate::ConfigError;
 
 #[derive(Debug, Serialize, Deserialize, Validate, Clone)]
 pub struct SimulatorConfig {
@@ -33,6 +40,27 @@ impl Default for SimulatorConfig {
                 jitter_ms: 0,
             },
         }
+    }
+}
+
+impl SimulatorConfig {
+    /// Load only SimulatorConfig from a specific path.
+    pub fn load_from_path<P: AsRef<Path>>(path: P) -> Result<Self, ConfigError> {
+        let path = path.as_ref();
+        if !path.exists() {
+            return Err(ConfigError::FileNotFound(PathBuf::from(
+                path.to_string_lossy().to_string(),
+            )));
+        }
+
+        Figment::new()
+            .merge(Yaml::file(path))
+            .extract()
+            .map_err(ConfigError::from)
+            .and_then(|config: Self| {
+                config.validate()?;
+                Ok(config)
+            })
     }
 }
 

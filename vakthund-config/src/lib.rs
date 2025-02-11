@@ -122,22 +122,6 @@ impl VakthundConfig {
                 Ok(config)
             })
     }
-
-    /// Load only SimulatorConfig from a specific path.
-    pub fn load_simulator_config_from_path<P: AsRef<Path>>(
-        path: P,
-    ) -> Result<crate::simulator::SimulatorConfig, ConfigError> {
-        let path = path.as_ref();
-        if !path.exists() {
-            println!("Simulator config not found, loading defaults");
-            return Ok(crate::simulator::SimulatorConfig::default());
-        }
-
-        Figment::new()
-            .merge(Yaml::file(path))
-            .extract()
-            .map_err(ConfigError::from)
-    }
 }
 
 #[cfg(test)]

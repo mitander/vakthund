@@ -31,10 +31,10 @@ pub struct Scenario {
 }
 
 impl Scenario {
-    /// Loads a scenario from a file.
+    /// Loads a scenario from a specified path.
     /// This stub implementation assumes that each non-empty line in the file contains a delay (in nanoseconds).
     /// For each delay, a dummy network event is created.
-    pub fn load_from_file<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
+    pub fn load_from_path<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
         let content = fs::read_to_string(path)?;
         let mut events = Vec::new();
         for line in content.lines() {

@@ -12,7 +12,6 @@ use std::path::Path;
 use std::sync::{atomic::AtomicBool, Arc};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use figment::providers::Format;
 use opentelemetry::KeyValue;
 use tracing::{error, info, instrument, Instrument};
 
@@ -131,17 +130,15 @@ pub async fn run_simulation_mode<P: AsRef<Path> + std::fmt::Debug>(
     info!("Loaded configuration: {:?}", config);
 
     // Load the simulation-specific configuration.
-    // In this design, simulator.yaml is used for simulation overrides.
-    let sim_config: SimulatorConfig = {
-        let path = "config/simulator.yaml";
-        if Path::new(path).exists() {
-            figment::Figment::new()
-                .merge(figment::providers::Yaml::file(path))
-                .extract()?
-        } else {
+    let path = "config/sim_config.yaml";
+    let sim_config = match SimulatorConfig::load_from_path(path) {
+        Ok(cfg) => cfg,
+        Err(err) => {
+            info!("No simulation config found: {err}");
             SimulatorConfig::default()
         }
     };
+
     info!("Loaded simulation configuration: {:?}", config);
 
     metrics.processed_events.inc();
@@ -149,7 +146,7 @@ pub async fn run_simulation_mode<P: AsRef<Path> + std::fmt::Debug>(
     if let Some(path) = scenario_path {
         // Replay mode remains unchanged.
         info!("Replaying scenario from file: {:?}", path.as_ref());
-        let scenario = match Scenario::load_from_file(path) {
+        let scenario = match Scenario::load_from_path(path) {
             Ok(s) => s,
             Err(e) => {
                 generate_bug_report(&format!(
