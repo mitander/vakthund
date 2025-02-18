@@ -7,7 +7,7 @@ pub type PacketCallback = dyn FnMut(&Packet) + Send;
 
 /// Run a live capture loop on the specified interface.
 /// This function will block until `terminate` is set to true.
-pub fn run<F>(
+pub fn run_capture_loop<F>(
     interface: &str,
     buffer_size: usize,
     promiscuous: bool,

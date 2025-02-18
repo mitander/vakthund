@@ -28,12 +28,12 @@ impl Firewall {
         Ok(Self {})
     }
 
-    pub fn ip_block(&mut self, _addr: std::net::Ipv4Addr) -> Result<(), FirewallError> {
+    pub fn block_ip(&mut self, _addr: std::net::Ipv4Addr) -> Result<(), FirewallError> {
         // No-op implementation
         Ok(())
     }
 
-    pub fn ip_is_blocked(&self, _addr: std::net::Ipv4Addr) -> bool {
+    pub fn is_ip_blocked(&self, _addr: std::net::Ipv4Addr) -> bool {
         // No-op implementation
         false
     }

@@ -6,5 +6,5 @@
 pub mod capture;
 pub mod packet;
 
-pub use capture::run;
+pub use capture::run_capture_loop;
 pub use packet::Packet;

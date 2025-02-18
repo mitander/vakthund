@@ -12,6 +12,7 @@ use super::network::NetworkEvent;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use thiserror::Error;
+use tracing::error;
 
 /// Event bus error conditions.
 #[derive(Error, Debug)]
@@ -51,14 +52,6 @@ impl EventBus {
     /// # Arguments
     ///
     /// * `capacity` - Must be a power of two for efficient modulo operations.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use vakthund_core::events::bus::EventBus;
-    ///
-    /// let bus = EventBus::with_capacity(4096).unwrap();
-    /// ```
     pub fn with_capacity(capacity: usize) -> Result<Self, EventError> {
         if !capacity.is_power_of_two() {
             return Err(EventError::InvalidCapacity);
@@ -87,13 +80,13 @@ impl EventBus {
         }
     }
 
-    /// Attempts to push event onto the bus.
+    /// Attempts to send event onto the bus.
     ///
     /// # Safety
     ///
     /// Uses unsafe code for interior mutability guarded by atomic counters.
     #[inline]
-    pub fn try_push(&self, event: NetworkEvent) -> Result<(), EventError> {
+    pub fn send(&self, event: NetworkEvent) -> Result<(), EventError> {
         let head = self.inner.head.0.load(Ordering::Relaxed);
         let tail = self.inner.tail.0.load(Ordering::Acquire);
 
@@ -111,11 +104,28 @@ impl EventBus {
         Ok(())
     }
 
-    /// Attempts to pop event from the bus.
+    /// Send event to event bus, blocks if queue is full.
+    #[inline]
+    pub fn send_blocking(&self, event: NetworkEvent) {
+        loop {
+            match self.send(event.clone()) {
+                Ok(_) => break,
+                Err(EventError::QueueFull) => {
+                    std::thread::yield_now();
+                }
+                Err(e) => {
+                    error!("Unexpected error during blocking push: {:?}", e);
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Attempts to receive a event from the bus.
     ///
     /// Returns `None` if the queue is empty.
     #[inline]
-    pub fn try_pop(&self) -> Option<NetworkEvent> {
+    pub fn recv(&self) -> Option<NetworkEvent> {
         let tail = self.inner.tail.0.load(Ordering::Relaxed);
         let head = self.inner.head.0.load(Ordering::Acquire);
 
@@ -159,17 +169,17 @@ mod tests {
     fn handles_single_element() {
         let bus = EventBus::with_capacity(2).unwrap();
         let event = test_event(1);
-        bus.try_push(event.clone()).unwrap();
-        assert_eq!(bus.try_pop().unwrap().timestamp, 1);
+        bus.send(event.clone()).unwrap();
+        assert_eq!(bus.recv().unwrap().timestamp, 1);
     }
 
     #[test]
     fn signals_queue_full() {
         let bus = EventBus::with_capacity(2).unwrap();
-        bus.try_push(test_event(1)).unwrap();
-        bus.try_push(test_event(2)).unwrap();
+        bus.send(test_event(1)).unwrap();
+        bus.send(test_event(2)).unwrap();
         assert!(matches!(
-            bus.try_push(test_event(3)),
+            bus.send(test_event(3)),
             Err(EventError::QueueFull)
         ));
     }
@@ -177,10 +187,10 @@ mod tests {
     #[test]
     fn maintains_ordering() {
         let bus = EventBus::with_capacity(4).unwrap();
-        bus.try_push(test_event(1)).unwrap();
-        bus.try_push(test_event(2)).unwrap();
-        assert_eq!(bus.try_pop().unwrap().timestamp, 1);
-        assert_eq!(bus.try_pop().unwrap().timestamp, 2);
+        bus.send(test_event(1)).unwrap();
+        bus.send(test_event(2)).unwrap();
+        assert_eq!(bus.recv().unwrap().timestamp, 1);
+        assert_eq!(bus.recv().unwrap().timestamp, 2);
     }
 
     #[test]
@@ -188,10 +198,10 @@ mod tests {
         let bus = EventBus::with_capacity(4).unwrap();
         for cycle in 0..2 {
             for i in 0..4 {
-                bus.try_push(test_event(i + cycle * 4)).unwrap();
+                bus.send(test_event(i + cycle * 4)).unwrap();
             }
             for i in 0..4 {
-                assert_eq!(bus.try_pop().unwrap().timestamp, i + cycle * 4);
+                assert_eq!(bus.recv().unwrap().timestamp, i + cycle * 4);
             }
         }
     }

@@ -206,7 +206,7 @@ pub async fn run_simulation_mode<P: AsRef<Path> + Debug>(
         let simulator_handle = tokio::spawn(async move {
             for event_id in 0..num_events {
                 if let Some(event) = simulator.simulate_event(event_id) {
-                    blocking_push(&event_bus_sim, event)
+                    event_bus_sim.send_blocking(event)
                 }
             }
             // Return the final state hash.
@@ -257,7 +257,7 @@ async fn process_events_from_bus(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let signature_engine = SignatureEngine::new();
 
-    while let Some(event) = event_bus.try_pop() {
+    while let Some(event) = event_bus.recv() {
         process_network_event(&event, &signature_engine, &metrics).await;
         println!("processed event");
     }
@@ -367,7 +367,7 @@ async fn process_network_event(
 #[instrument(level = "debug", name = "handle_detection_match", skip(metrics))]
 async fn handle_detection_match(metrics: &MetricsRecorder) {
     let block_result = Firewall::new("dummy_interface")
-        .and_then(|mut fw| fw.ip_block(Ipv4Addr::new(127, 0, 0, 1)));
+        .and_then(|mut fw| fw.block_ip(Ipv4Addr::new(127, 0, 0, 1)));
 
     match block_result {
         Ok(_) => {
@@ -408,7 +408,7 @@ async fn run_capture_loop(
     terminate: &Arc<AtomicBool>,
     event_bus: Arc<EventBus>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    capture::run(
+    capture::run_capture_loop(
         interface,
         buffer_size,
         promiscuous,
@@ -429,22 +429,6 @@ async fn run_capture_loop(
 fn push_captured_packet(packet: &vakthund_capture::packet::Packet, event_bus: Arc<EventBus>) {
     let timestamp = Instant::now().elapsed().as_nanos() as u64;
     let event = NetworkEvent::new(timestamp, packet.data.clone());
-    blocking_push(&event_bus, event);
+    event_bus.send_blocking(event);
     info!("Captured packet with {} bytes", packet.data.len());
-}
-
-fn blocking_push(event_bus: &Arc<EventBus>, event: NetworkEvent) {
-    use vakthund_core::events::bus::EventError;
-    loop {
-        match event_bus.try_push(event.clone()) {
-            Ok(_) => break,
-            Err(EventError::QueueFull) => {
-                std::thread::yield_now();
-            }
-            Err(e) => {
-                error!("Unexpected error during blocking push: {:?}", e);
-                break;
-            }
-        }
-    }
 }

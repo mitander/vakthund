@@ -20,8 +20,8 @@ fn benchmark_event_bus_throughput(c: &mut Criterion) {
             };
             b.iter(|| {
                 // Use black_box to prevent over‑optimization.
-                black_box(event_bus.try_push(event.clone()).unwrap());
-                black_box(event_bus.try_pop().unwrap());
+                black_box(event_bus.send(event.clone()).unwrap());
+                black_box(event_bus.recv().unwrap());
             });
         });
     }

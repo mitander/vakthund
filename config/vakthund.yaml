@@ -5,7 +5,7 @@ core:
     capacity: 4096
     require_power_of_two: true
     num_consumers: 4
-    on_full: yield
+    full_queue_strategy: yield
 
   memory:
     arena_chunk_size: 65536

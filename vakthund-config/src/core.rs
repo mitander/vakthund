@@ -40,7 +40,7 @@ pub struct EventBusConfig {
 
     /// Spin strategy for full queue (yield, spin_loop, or block).
     #[serde(default = "default_spin_strategy")]
-    pub on_full: String,
+    pub full_queue_strategy: String,
 }
 
 fn default_capacity() -> usize {
@@ -65,7 +65,7 @@ impl Default for EventBusConfig {
             capacity: default_capacity(),
             require_power_of_two: default_true(),
             num_consumers: default_consumers(),
-            on_full: default_spin_strategy(),
+            full_queue_strategy: default_spin_strategy(),
         }
     }
 }

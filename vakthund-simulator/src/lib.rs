@@ -4,25 +4,22 @@
 //!
 //! This module uses simulation‑only components (virtual clock and network simulation)
 //! and shares the production event bus and event type from `vakthund-core`.
+pub mod chaos;
+pub mod cli;
+pub mod network_simulation;
+pub mod replay;
+pub mod virtual_clock;
 
 use blake3::Hasher;
 use bytes::Bytes;
 use std::sync::Arc;
 use std::time::Duration;
 
-// Import our simulation modules:
-pub mod virtual_clock;
-pub use virtual_clock::VirtualClock;
-
-pub mod network_simulation;
 pub use network_simulation::jitter::{JitterModel, RandomJitterModel};
 pub use network_simulation::latency::{FixedLatencyModel, LatencyModel};
 pub use network_simulation::packet_loss::{NoPacketLossModel, PacketLossModel};
 pub use vakthund_config::SimulatorConfig;
-
-pub mod chaos;
-pub mod cli;
-pub mod replay;
+pub use virtual_clock::VirtualClock;
 
 /// The Simulator ties together simulation‐specific components.
 pub struct Simulator {
@@ -32,7 +29,6 @@ pub struct Simulator {
     packet_loss: Box<dyn PacketLossModel + Send>,
     state_hasher: Hasher,
     chaos_enabled: bool,
-    /// Shared event bus from production (using vakthund-core’s bus).
     event_bus: Option<Arc<vakthund_core::events::bus::EventBus>>,
 }
 
@@ -109,7 +105,7 @@ impl Simulator {
 
         // If an event bus is provided, push the event.
         if let Some(ref bus) = self.event_bus {
-            blocking_push(bus, event.clone());
+            bus.send_blocking(event.clone());
         }
 
         // Update state hash.
@@ -127,23 +123,6 @@ impl Simulator {
     }
 }
 
-/// Helper function to perform a blocking push on the event bus.
-fn blocking_push(
-    event_bus: &Arc<vakthund_core::events::bus::EventBus>,
-    event: vakthund_core::events::network::NetworkEvent,
-) {
-    use vakthund_core::events::bus::EventError;
-    loop {
-        match event_bus.try_push(event.clone()) {
-            Ok(_) => break,
-            Err(EventError::QueueFull) => {
-                std::thread::yield_now();
-            }
-            Err(e) => panic!("Failed to push simulated event: {:?}", e),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,7 +134,6 @@ mod tests {
         let event = simulator.simulate_event(1);
         assert!(event.is_some());
         let e = event.unwrap();
-        // Ensure the timestamp is greater than the seed.
         assert!(e.timestamp > 42);
     }
 
@@ -166,16 +144,14 @@ mod tests {
         let mut simulator = Simulator::new(42, false, 100, 20, Some(Arc::clone(&bus_arc)));
         let event = simulator.simulate_event(2);
         assert!(event.is_some());
-        // After pushing, the bus should have an event.
-        let popped = bus_arc.try_pop();
-        assert!(popped.is_some());
+        let received_event = bus_arc.recv();
+        assert!(received_event.is_some());
     }
 
     #[test]
     fn test_run_simulation() {
         let mut simulator = Simulator::new(42, false, 100, 20, None);
         let final_hash = simulator.run(10);
-        // Expect a nonempty hash string.
         assert!(!final_hash.is_empty());
     }
 }

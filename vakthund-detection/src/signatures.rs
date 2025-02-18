@@ -37,7 +37,7 @@ impl SignatureEngine {
     }
 
     /// Add pattern using Tigerbeetle-style *_verb
-    pub fn pattern_add(&self, pattern: &str) -> Result<(), DetectionError> {
+    pub fn add_pattern(&self, pattern: &str) -> Result<(), DetectionError> {
         {
             let mut patterns = self.patterns.write();
             patterns.push(pattern.to_string());
@@ -82,7 +82,7 @@ mod tests {
     #[test]
     fn test_pattern_matching() {
         let engine = SignatureEngine::new();
-        engine.pattern_add("test").unwrap();
+        engine.add_pattern("test").unwrap();
 
         let matches = engine.buffer_scan(b"this is a test");
         assert!(!matches.is_empty());
@@ -91,7 +91,7 @@ mod tests {
     #[test]
     fn test_no_match() {
         let engine = SignatureEngine::new();
-        engine.pattern_add("test").unwrap();
+        engine.add_pattern("test").unwrap();
 
         let matches = engine.buffer_scan(b"no match here");
         assert!(matches.is_empty());
@@ -100,8 +100,8 @@ mod tests {
     #[test]
     fn test_multiple_patterns() {
         let engine = SignatureEngine::new();
-        engine.pattern_add("test").unwrap();
-        engine.pattern_add("example").unwrap();
+        engine.add_pattern("test").unwrap();
+        engine.add_pattern("example").unwrap();
 
         let matches = engine.buffer_scan(b"this is a test with an example");
         assert_eq!(matches.len(), 2); // Expecting two matches

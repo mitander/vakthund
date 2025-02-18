@@ -42,7 +42,7 @@ impl<T> MemoryPool<T> {
             vec.resize_with(chunk_size, || MaybeUninit::uninit());
             chunks.push(vec.into_boxed_slice());
         }
-        println!("MemoryPool::new: After chunk resize, chunks.len()={}, chunks[0].len() (if chunks not empty)={}", chunks.len(), chunks.get(0).map_or(0, |c| c.len())); // Debug Print
+        println!("MemoryPool::new: After chunk resize, chunks.len()={}, chunks[0].len() (if chunks not empty)={}", chunks.len(), chunks.first().map_or(0, |c| c.len()));
 
         for i in 0..capacity {
             free_indices.push(i);
