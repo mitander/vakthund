@@ -20,19 +20,22 @@
 use opentelemetry::KeyValue;
 use tracing::{info_span, Instrument};
 use tracing_subscriber::fmt::format::FmtSpan;
+use tracing_subscriber::{fmt, EnvFilter};
 
 #[derive(Clone)]
 pub struct EventLogger;
 
 impl EventLogger {
     pub fn init() {
-        tracing_subscriber::fmt()
-            .with_span_events(FmtSpan::ENTER)
+        fmt()
+            .with_env_filter(
+                EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+            )
             .with_thread_names(true)
-            .init();
+            .with_span_events(FmtSpan::ENTER)
+            .init()
     }
 
-    /// Log security event with key metadata
     #[inline] // Potential inlining for performance
     pub async fn log_event(event_type: &str, metadata: Vec<KeyValue>) {
         let span = info_span!(

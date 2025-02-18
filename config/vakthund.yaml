@@ -30,7 +30,6 @@ detection:
     window_size: 5000
     threshold: 3.5
 
-# Prevention system config
 prevention:
   firewall:
     interface: eth0
@@ -39,12 +38,35 @@ prevention:
   rate_limits:
     max_connections: "1000/s"
     burst_size: 5000
+  quarantine:
+    timeout: 600
+    whitelist: []
 
 # Telemetry and monitoring
 telemetry:
   metrics:
     port: 9090
     interval: "5s"
-  logging:
-    level: info
-    format: json
+  tracing:
+    enabled: true
+    endpoint: "localhost:4317"
+  alerts:
+    syslog: true
+    prometheus: true
+    webhook: null
+    min_severity: "medium"
+
+monitor:
+  thresholds:
+    packet_rate: 1000
+    data_volume: 100
+    port_entropy: 2.5
+    connection_rate: 500
+  quarantine:
+    timeout: 600
+    whitelist: []
+  alerts:
+    syslog: true
+    prometheus: true
+    webhook: null
+    min_severity: "medium"

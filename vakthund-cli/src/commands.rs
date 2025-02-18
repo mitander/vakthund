@@ -41,6 +41,8 @@ pub struct SimulateArgs {
 
 pub async fn run_command(cli: Cli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let metrics = MetricsRecorder::new();
+    vakthund_telemetry::logging::EventLogger::init();
+
     match cli.command {
         Commands::Run(run_args) => run_production_mode(&run_args.interface, metrics).await,
         Commands::Simulate(sim_args) => {

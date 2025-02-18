@@ -76,12 +76,10 @@ impl Default for Thresholds {
 /// Network quarantine parameters.
 #[derive(Debug, Serialize, Deserialize, Validate, Clone)]
 pub struct QuarantineConfig {
-    /// Timeout for quarantined devices (seconds).
     #[validate(range(min = 60, max = 86400))]
     #[serde(default = "default_quarantine_timeout")]
     pub timeout: u32,
 
-    /// Whitelisted IP addresses/CIDR ranges.
     #[validate(custom(function = validation::validate_cidr_list))]
     #[serde(default)]
     pub whitelist: Vec<IpNetwork>,

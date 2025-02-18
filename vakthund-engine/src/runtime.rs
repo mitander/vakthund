@@ -259,7 +259,10 @@ async fn process_events_from_bus(
 
     while let Some(event) = event_bus.recv() {
         process_network_event(&event, &signature_engine, &metrics).await;
-        println!("processed event");
+        debug!(
+            "Processed event from {}",
+            event.source.unwrap_or_else(|| "unknown".parse().unwrap())
+        );
     }
     Ok(())
 }
