@@ -5,18 +5,16 @@ edition = "2021"
 
 [dependencies]
 serde_bytes = { workspace = true }
-bytes = { workspace = true, features = ["serde"]}
+bytes = { workspace = true, features = ["serde"] }
 crossbeam = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }  # Added macros and rt-multi-thread
-proptest = { workspace = true }
-bumpalo = "3.17.0"
-rand = { version = "0.9.0", features = ["small_rng", "std"] }
-concurrent-queue = "2.5.0"
-serde = { version = "1.0", features = ["derive"] } # Added serde for config
-serde_yaml = "0.9.34"
-tracing = "0.1.41"
-opentelemetry = "0.28.0"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+bumpalo = { workspace = true }
+concurrent-queue = { workspace = true }
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+tracing = { workspace = true }
+opentelemetry = { workspace = true }
 
 vakthund-telemetry = { path = "../vakthund-telemetry" }
 vakthund-detection = { path = "../vakthund-detection" }
@@ -25,7 +23,7 @@ vakthund-protocols = { path = "../vakthund-protocols" }
 vakthund-capture = { path = "../vakthund-capture" }
 
 [dev-dependencies]
-criterion = "0.5.1"
+criterion = { workspace = true }
 
 [[bench]]
 name = "event_bus_bench"

@@ -1,6 +1,5 @@
 [workspace]
 resolver = "2"
-
 members = [
     "vakthund-core",
     "vakthund-detection",
@@ -10,40 +9,61 @@ members = [
     "vakthund-simulator",
     "vakthund-cli",
     "vakthund-capture",
-    "vakthund-config"
-
-    # FUTURE:
-    # "tests/integration",
-    # "tests/scenarios",
-    # "tests/fuzz",
-    # "docs",
+    "vakthund-config",
+    "vakthund-engine",
 ]
 
 [workspace.dependencies]
-serde_bytes = "0.11.14"
-serde_with = "3.7.0"
+# Base
 anyhow = "1.0.95"
 bytes = "1.10.0"
-crossbeam = "0.8.4"
 thiserror = "2.0.11"
-tokio = { version = "1", features = ["full"] }
-hyperscan = "0.3"
-parking_lot = "0.12"
-nom = "8.0.0"
-opentelemetry = "0.27.1" # Placeholder version, may need adjustment
-tracing = "0.1"
-tracing-subscriber = "0.3"
-prometheus = "0.13"
-clap = { version = "4", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_bytes = "0.11.14"
+serde_yaml = "0.9.34"
+hex = "0.4.3"
+rand = "0.9.0"
+lazy_static = "1.4.0"
+regex = "1"
 num_cpus = "1.16"
 blake3 = "1.3"
-tracing-test = "0.2"
+chrono = { version = "0.4", features = ["serde"] }
+concurrent-queue = "2.5.0"
+
+# Async
+tokio = { version = "1", features = ["full"] }
+crossbeam = "0.8.4"
+
+# Parsing
+nom = "8.0.0"
+aho-corasick = "1"
+ipnetwork =  { version = "0.21.1", features = ["serde"] }
+
+# Config
+figment = { version = "0.10.19", features = ["yaml", "env", "json"] }
+validator = { version = "0.20.0", features = ["validator_derive", "derive"] }
+
+# Observability
+tracing = "0.1"
+tracing-subscriber = "0.3"
+tracing-attributes = "0.1.28"
+opentelemetry = "0.27.1"
+prometheus = "0.13"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Testing
 proptest = "1.0"
 criterion = "0.5"
-aya-ebpf = "0.1.1"
-aya = "0.13.1"
+tracing-test = "0.2"
+
+# Memory
 bumpalo = "3.17"
-rand = "0.9.0"
-aho-corasick = "1"
-hex = "0.4.3"
-tracing-attributes = "0.1.28"
+parking_lot = "0.12"
+
+# Specialized
+hyperscan = "0.3"  # For vakthund-detection
+aya = "0.13.1"     # For vakthund-prevention
+aya-ebpf = "0.1.1"
+pcap = "2.2.0"     # For vakthund-capture
