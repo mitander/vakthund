@@ -2,6 +2,9 @@
 //!
 //! **Deprecated:** Simulation‑specific configuration is now handled in the vakthund‑simulator crate.
 //! This module remains only as a stub for backward compatibility.
+use rand::rngs::StdRng;
+use rand::Rng;
+use rand::SeedableRng;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -61,6 +64,22 @@ impl SimulatorConfig {
                 config.validate()?;
                 Ok(config)
             })
+    }
+
+    pub fn generate_fuzz_config(seed: u64) -> SimulatorConfig {
+        let mut rng = StdRng::seed_from_u64(seed);
+
+        SimulatorConfig {
+            seed,
+            event_count: rng.random_range(1000..100_000),
+            chaos: ChaosConfig {
+                fault_probability: rng.random_range(0.0..0.2),
+            },
+            network: NetworkModelConfig {
+                latency_ms: rng.random_range(0..500),
+                jitter_ms: rng.random_range(0..100),
+            },
+        }
     }
 }
 

@@ -12,6 +12,7 @@ hex = "0.4.3"
 serde = "1.0.217"
 serde_yaml = "0.9.34"
 figment = "0.10.19"
+anyhow = "1.0.96"
 
 vakthund-core = { path = "../vakthund-core" }
 vakthund-simulator = { path = "../vakthund-simulator" }

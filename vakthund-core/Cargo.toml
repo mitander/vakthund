@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bytes = { workspace = true }
+serde_bytes = { workspace = true }
+bytes = { workspace = true, features = ["serde"]}
 crossbeam = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }  # Added macros and rt-multi-thread

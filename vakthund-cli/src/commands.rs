@@ -17,6 +17,8 @@ pub enum Commands {
     Run(RunArgs),
     /// Run deterministic simulation (or replay if a scenario file is provided)
     Simulate(SimulateArgs),
+    /// Run continuous fuzz testing with generated scenarios
+    Fuzz(FuzzArgs),
 }
 
 #[derive(Args, Debug, Clone)]
@@ -39,6 +41,19 @@ pub struct SimulateArgs {
     pub validate_hash: Option<String>,
 }
 
+#[derive(Args, Debug, Clone)]
+pub struct FuzzArgs {
+    /// Initial seed for fuzzing (will auto-increment)
+    #[arg(long, default_value_t = 1)]
+    pub seed: u64,
+    /// Number of fuzzing iterations (0 for unlimited)
+    #[arg(long, default_value_t = 0)]
+    pub iterations: usize,
+    /// Maximum events per scenario
+    #[arg(long, default_value_t = 1000)]
+    pub max_events: usize,
+}
+
 pub async fn run_command(cli: Cli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let metrics = MetricsRecorder::new();
     vakthund_telemetry::logging::EventLogger::init();
@@ -55,5 +70,34 @@ pub async fn run_command(cli: Cli) -> Result<(), Box<dyn std::error::Error + Sen
             )
             .await
         }
+        Commands::Fuzz(fuzz_args) => {
+            run_fuzz_mode(
+                fuzz_args.seed,
+                fuzz_args.iterations,
+                fuzz_args.max_events,
+                metrics,
+            )
+            .await
+        }
     }
+}
+
+async fn run_fuzz_mode(
+    mut seed: u64,
+    iterations: usize,
+    max_events: usize,
+    metrics: MetricsRecorder,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut count = 0;
+    loop {
+        let _ = run_simulation_mode::<PathBuf>(None, max_events, seed, None, metrics.clone()).await;
+
+        if iterations > 0 && count >= iterations {
+            break;
+        }
+
+        seed += 1;
+        count += 1;
+    }
+    Ok(())
 }

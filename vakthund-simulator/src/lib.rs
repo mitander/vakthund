@@ -17,12 +17,17 @@ use std::time::Duration;
 
 pub use network_simulation::jitter::{JitterModel, RandomJitterModel};
 pub use network_simulation::latency::{FixedLatencyModel, LatencyModel};
-pub use network_simulation::packet_loss::{NoPacketLossModel, PacketLossModel};
+pub use network_simulation::packet_loss::{
+    NoPacketLossModel, PacketLossModel, ProbabilisticLossModel,
+};
+
+pub use replay::{Scenario, ScenarioEvent};
 pub use vakthund_config::SimulatorConfig;
 pub use virtual_clock::VirtualClock;
 
 /// The Simulator ties together simulation‐specific components.
 pub struct Simulator {
+    event_log: Vec<ScenarioEvent>,
     clock: VirtualClock,
     latency_model: FixedLatencyModel,
     jitter_model: RandomJitterModel,
@@ -49,6 +54,7 @@ impl Simulator {
         event_bus: Option<Arc<vakthund_core::events::bus::EventBus>>,
     ) -> Self {
         Self {
+            event_log: Vec::new(),
             clock: VirtualClock::new(seed),
             latency_model: FixedLatencyModel::new(latency_ms),
             jitter_model: RandomJitterModel::new(jitter_ms),
@@ -59,8 +65,62 @@ impl Simulator {
         }
     }
 
+    pub fn apply_scenario_event(&mut self, event: ScenarioEvent) {
+        match event {
+            ScenarioEvent::NetworkDelay(delay_ns) => {
+                self.clock.advance(delay_ns);
+            }
+            ScenarioEvent::PacketLoss(probability) => {
+                self.set_packet_loss_model(Box::new(ProbabilisticLossModel::new(probability)));
+            }
+            ScenarioEvent::NetworkEvent { delay_ns, event } => {
+                self.clock.advance(delay_ns);
+                if let Some(ref bus) = self.event_bus {
+                    bus.send_blocking(event.clone());
+                }
+            }
+            // Add handling for other scenario event types
+            _ => {}
+        }
+    }
+
+    // Add this new constructor
+    pub fn from_scenario(scenario: &Scenario) -> Self {
+        Self::new(
+            scenario.seed,
+            scenario.config.chaos.fault_probability > 0.0,
+            scenario.config.network.latency_ms,
+            scenario.config.network.jitter_ms,
+            None,
+        )
+    }
+
+    // Add this method
+    pub async fn replay_events(
+        &mut self,
+        events: Vec<ScenarioEvent>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        for event in events {
+            self.apply_scenario_event(event);
+        }
+        Ok(())
+    }
+
+    // Add event tracking
+    pub fn get_recorded_events(&self) -> Vec<ScenarioEvent> {
+        self.event_log.clone()
+    }
+
+    // TODO:
+    // pub fn state_hash(&self) -> String {
+    //     let mut hasher = blake3::Hasher::new();
+    //     hasher.update(&self.event_bus_state());
+    //     hasher.update(&self.detection_engine_state());
+    //     hex::encode(hasher.finalize().as_bytes())
+    // }
+
     // Finalize and consume the hasher
-    pub fn finalize_hash(&mut self) -> String {
+    pub fn finalize_hash(&self) -> String {
         // Finalize consumes the hasher; the output is an owned value.
         let output = self.state_hasher.finalize();
         hex::encode(output.as_bytes())
@@ -110,6 +170,11 @@ impl Simulator {
 
         // Update state hash.
         self.state_hasher.update(event_content.as_bytes());
+
+        self.event_log.push(ScenarioEvent::NetworkEvent {
+            delay_ns: total_delay.as_nanos() as u64,
+            event: event.clone(),
+        });
         Some(event)
     }
 

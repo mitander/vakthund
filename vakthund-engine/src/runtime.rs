@@ -1,127 +1,64 @@
 //! # Runtime Engine
 //!
-//! This module provides the core runtime functionality for Vakthund
-//! - production mode
-//! - simulation mode
-//! - replay mode with scenarios
+//! This module provides the core runtime functionality for Vakthund:
+//! - Production mode (live network capture)
+//! - Simulation mode (controlled environment testing)
+//! - Scenario replay mode (deterministic event replay)
+use std::{
+    fmt::Debug,
+    fs::File,
+    io::Write,
+    net::Ipv4Addr,
+    path::Path,
+    sync::{atomic::AtomicBool, Arc},
+    time::{Instant, SystemTime, UNIX_EPOCH},
+};
 
-use std::fmt::Debug;
-use std::fs::File;
-use std::io::Write;
-use std::net::Ipv4Addr;
-use std::path::Path;
-use std::sync::{atomic::AtomicBool, Arc};
-use std::time::Instant;
-
+use anyhow::Context;
 use figment::providers::Format;
 use opentelemetry::KeyValue;
 use tracing::{debug, error, info, instrument, Instrument};
 
 use vakthund_capture::capture;
-use vakthund_config::{self, SimulatorConfig, VakthundConfig};
+use vakthund_config::{SimulatorConfig, VakthundConfig};
 use vakthund_core::events::{bus::EventBus, network::NetworkEvent};
 use vakthund_detection::signatures::SignatureEngine;
 use vakthund_prevention::firewall::Firewall;
+use vakthund_protocols::AnyParser;
 use vakthund_protocols::{CoapParser, ModbusParser, MqttParser};
-use vakthund_simulator::{
-    replay::{ReplayEngine, Scenario},
-    virtual_clock::VirtualClock,
-    Simulator,
-};
+use vakthund_simulator::{replay::Scenario, Simulator};
 use vakthund_telemetry::{logging::EventLogger, metrics::MetricsRecorder};
 
-/// Generates a bug report file with the given report details.
-/// This function is used when a fatal error (such as a state hash mismatch)
-/// is encountered.
-fn generate_bug_report(report: &str) {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let filename = format!("bug_report_{}.txt", now);
-    match File::create(&filename) {
-        Ok(mut file) => {
-            if let Err(e) = file.write_all(report.as_bytes()) {
-                eprintln!("Failed to write bug report: {:?}", e);
-            } else {
-                println!("Bug report written to {}", filename);
-            }
-        }
-        Err(e) => eprintln!("Failed to create bug report file: {:?}", e),
-    }
-}
-
-/// Runs production (live capture) mode.
-/// Loads configuration from "config/production.yaml" and uses the specified
-/// settings for event bus capacity, telemetry, etc.
-///
-/// # Arguments
-/// * interface - The network interface to capture on.
-/// * metrics - The metrics recorder to be used for telemetry.
+/// Main production mode execution flow
 #[instrument(level = "info", name = "run_production_mode", skip(metrics))]
 pub async fn run_production_mode(
     interface: &str,
     metrics: MetricsRecorder,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let config_path = "config/vakthund.yaml";
-    let config = VakthundConfig::load_from_path(config_path)
-        .unwrap_or_else(|err| panic!("Failed to load configuration from {config_path}: {err}",));
-    info!("Loaded configuration: {:?}", config);
+    let config = VakthundConfig::load_from_path("config/vakthund.yaml")
+        .unwrap_or_else(|e| panic!("Configuration load failed: {}", e));
 
-    // Use the event bus capacity from configuration.
-    let event_bus_capacity = config.core.event_bus.capacity;
+    info!("Loaded production configuration: {:?}", config);
+
     let event_bus = Arc::new(
-        EventBus::with_capacity(event_bus_capacity)
-            .expect("Failed to create event bus with configured capacity"),
-    );
-    let event_bus_for_processing = Arc::clone(&event_bus);
-    let metrics_processor = metrics.clone();
-
-    // Spawn the event processing task.
-    let processor_handle = tokio::spawn(
-        async move { process_events_from_bus(event_bus_for_processing, metrics_processor).await }
-            .instrument(tracing::info_span!("event_processor_task")),
+        EventBus::with_capacity(config.core.event_bus.capacity)
+            .expect("Failed to create event bus"),
     );
 
-    let terminate = Arc::new(AtomicBool::new(false));
-    info!("Starting live capture on interface: {}", interface);
-    let event_bus_for_capture = Arc::clone(&event_bus);
-
-    // Create an owned copy of the interface string so that it can be moved into the async block.
-    let interface_owned = interface.to_owned();
-
-    // Spawn the capture task.
-    let capture_handle = tokio::spawn(
-        async move {
-            run_capture_loop(
-                interface_owned.as_str(),
-                config.capture.buffer_size,
-                config.capture.promiscuous,
-                &terminate,
-                event_bus_for_capture,
-            )
-            .await
-        }
-        .instrument(tracing::info_span!("capture_task")),
-    );
-
-    // Wait for the processing and capture tasks to complete.
+    let (processor_handle, capture_handle) = spawn_production_tasks(
+        interface.to_string(),
+        config.capture.buffer_size,
+        config.capture.promiscuous,
+        Arc::clone(&event_bus),
+        metrics,
+    )
+    .await;
     processor_handle.await??;
-    let _ = capture_handle.await?;
+    capture_handle.await??;
     Ok(())
 }
 
-/// Runs simulation mode (or replay if a scenario file is provided).
-/// Loads simulation configuration from "config.yaml".
-///
-/// # Arguments
-/// * scenario_path - Optional path to a scenario file. If provided, replay mode is used.
-/// * num_events - Number of events to simulate (if no scenario file is given).
-/// * seed - Seed for the virtual clock and randomness.
-/// * validate_hash - Optional expected state hash (for validation).
-/// * metrics - The metrics recorder for telemetry.
+/// Main simulation mode execution flow
 #[instrument(level = "info", name = "run_simulation_mode", skip(metrics))]
 pub async fn run_simulation_mode<P: AsRef<Path> + Debug>(
     scenario_path: Option<P>,
@@ -130,127 +67,87 @@ pub async fn run_simulation_mode<P: AsRef<Path> + Debug>(
     validate_hash: Option<&str>,
     metrics: MetricsRecorder,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let config = VakthundConfig::load().expect("Configuration load failed");
-    info!("Loaded configuration: {:?}", config);
+    match scenario_path {
+        Some(path) => {
+            let scenario = Scenario::load_from_path(path)?;
+            let mut simulator = Simulator::from_scenario(&scenario);
 
-    // Load the simulation-specific configuration.
-    // In this design, simulator.yaml is used for simulation overrides.
-    let sim_config: SimulatorConfig = {
-        let path = "config/simulator.yaml";
-        if Path::new(path).exists() {
-            figment::Figment::new()
-                .merge(figment::providers::Yaml::file(path))
-                .extract()?
-        } else {
-            SimulatorConfig::default()
+            simulator.replay_events(scenario.events.clone()).await?;
+            validate_simulation_hash(&scenario, simulator.finalize_hash())?;
+            Ok(())
         }
-    };
-    info!("Loaded simulation configuration: {:?}", config);
+        None => {
+            let config = VakthundConfig::load()?;
+            let sim_config = load_simulator_config()?;
 
-    metrics.processed_events.inc();
+            let effective_seed = if seed != 0 { seed } else { sim_config.seed };
+            let event_bus = Arc::new(
+                EventBus::with_capacity(config.core.event_bus.capacity)
+                    .context("Event bus creation failed")?,
+            );
 
-    if let Some(path) = scenario_path {
-        // Replay mode remains unchanged.
-        info!("Replaying scenario from file: {:?}", path.as_ref());
-        let scenario = match Scenario::load_from_path(path) {
-            Ok(s) => s,
-            Err(e) => {
-                generate_bug_report(&format!(
-                    "Failed to load scenario.\nError: {:?}\nConfiguration: {:?}",
-                    e, config
-                ));
-                return Err(Box::new(e));
-            }
-        };
-        let clock = VirtualClock::new(seed);
-        let replay_engine = ReplayEngine::new(scenario, clock);
-        while let Some(_event) = replay_engine.next_event().await {
-            // Process replayed events as needed.
+            let simulator = Simulator::new(
+                seed,
+                sim_config.chaos.fault_probability > 0.0,
+                sim_config.network.latency_ms,
+                sim_config.network.jitter_ms,
+                Some(Arc::clone(&event_bus)),
+            );
+
+            let (processor_handle, simulator_handle) =
+                spawn_simulation_tasks(event_bus, metrics, num_events, simulator).await;
+
+            let (_, final_hash) = simulator_handle.await??;
+            processor_handle.await??;
+
+            validate_simulation_result(validate_hash, &final_hash, &config)?;
+            EventLogger::log_event(
+                "simulation_complete",
+                vec![
+                    KeyValue::new("event_count", num_events.to_string()),
+                    KeyValue::new("seed", effective_seed.to_string()),
+                    KeyValue::new("final_hash", final_hash.to_string()),
+                ],
+            )
+            .await;
+
+            Ok(())
         }
-        let final_hash = "replay_dummy_hash".to_string();
-        info!("Replay complete. State hash: {}", final_hash);
-        EventLogger::log_event(
-            "replay_complete",
-            vec![
-                KeyValue::new("seed", seed.to_string()),
-                KeyValue::new("final_hash", final_hash.clone()),
-            ],
-        )
-        .await;
-        Ok(())
-    } else {
-        let event_bus = Arc::new(
-            EventBus::with_capacity(config.core.event_bus.capacity)
-                .expect("Failed to create event bus with configured capacity"),
-        );
-        let event_bus_sim: Arc<EventBus> = Arc::clone(&event_bus);
-        let event_bus_processing: Arc<EventBus> = Arc::clone(&event_bus);
-
-        let effective_seed = if seed != 0 { seed } else { sim_config.seed };
-
-        let mut simulator = Simulator::new(
-            effective_seed,
-            sim_config.chaos.fault_probability > 0.0,
-            sim_config.network.latency_ms,
-            sim_config.network.jitter_ms,
-            Some(event_bus),
-        );
-
-        let metrics_processor = metrics.clone();
-        let processor_handle = tokio::spawn(
-            async move { process_events_from_bus(event_bus_processing, metrics_processor).await }
-                .instrument(tracing::info_span!("event_processor_task")),
-        );
-
-        // Spawn a task to simulate events and push them into the event bus.
-        let simulator_handle = tokio::spawn(async move {
-            for event_id in 0..num_events {
-                if let Some(event) = simulator.simulate_event(event_id) {
-                    event_bus_sim.send_blocking(event)
-                }
-            }
-            // Return the final state hash.
-            simulator.finalize_hash()
-        });
-
-        let final_hash = simulator_handle.await.unwrap();
-        processor_handle.await??;
-        println!("Simulation complete. State hash: {}", final_hash);
-        if let Some(expected) = validate_hash {
-            if final_hash != expected {
-                generate_bug_report(&format!(
-                    "Simulation error: state hash mismatch!\nExpected: {}\nGot: {}\nConfiguration: {:?}",
-                    expected, final_hash, config
-                ));
-                return Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "State hash mismatch",
-                )));
-            }
-        }
-        EventLogger::log_event(
-            "simulation_complete",
-            vec![
-                KeyValue::new("event_count", num_events.to_string()),
-                KeyValue::new("seed", effective_seed.to_string()),
-                KeyValue::new("final_hash", final_hash.clone()),
-            ],
-        )
-        .await;
-        Ok(())
     }
 }
 
-/// Internal function that continuously processes events from the event bus.
-///
-/// # Arguments
-/// * event_bus - Shared event bus handle.
-/// * metrics - Metrics recorder for telemetry.
-#[instrument(
-    level = "debug",
-    name = "process_events_from_bus",
-    skip(event_bus, metrics)
-)]
+/// Spawns parallel tasks for simulation processing
+async fn spawn_simulation_tasks(
+    event_bus: Arc<EventBus>,
+    metrics: MetricsRecorder,
+    num_events: usize,
+    mut simulator: Simulator,
+) -> (
+    tokio::task::JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>>,
+    tokio::task::JoinHandle<Result<(Simulator, String), Box<dyn std::error::Error + Send + Sync>>>,
+) {
+    let event_bus_clone = Arc::clone(&event_bus);
+    let processor_handle = tokio::spawn(
+        async move { process_events_from_bus(event_bus_clone, metrics).await }
+            .instrument(tracing::info_span!("event_processor")),
+    );
+
+    let event_bus_sim = Arc::clone(&event_bus);
+    let simulator_handle = tokio::spawn(async move {
+        for event_id in 0..num_events {
+            if let Some(event) = simulator.simulate_event(event_id) {
+                event_bus_sim.send_blocking(event);
+            }
+        }
+        let final_hash = simulator.finalize_hash();
+        Ok((simulator, final_hash))
+    });
+
+    (processor_handle, simulator_handle)
+}
+
+/// Event processing core logic
+#[instrument(level = "debug", skip(event_bus, metrics))]
 async fn process_events_from_bus(
     event_bus: Arc<EventBus>,
     metrics: MetricsRecorder,
@@ -259,130 +156,90 @@ async fn process_events_from_bus(
 
     while let Some(event) = event_bus.recv() {
         process_network_event(&event, &signature_engine, &metrics).await;
-        debug!(
-            "Processed event from {}",
-            event.source.unwrap_or_else(|| "unknown".parse().unwrap())
-        );
+        debug!("Processed event from {:?}", event.source);
     }
+
     Ok(())
 }
 
-/// Internal function to process a single network event.
-///
-/// It parses the MQTT packet, measures detection latency, and if a signature match
-/// is found, triggers the detection handler.
-///
-/// # Arguments
-/// * event - The network event.
-/// * signature_engine - The signature engine for matching patterns.
-/// * metrics - Metrics recorder for telemetry.
-#[instrument(
-    level = "debug",
-    name = "process_network_event",
-    skip(signature_engine, metrics)
-)]
+/// Network event processing implementation
+#[instrument(level = "debug", skip(signature_engine, metrics))]
 async fn process_network_event(
     event: &NetworkEvent,
     signature_engine: &SignatureEngine,
     metrics: &MetricsRecorder,
 ) {
-    // Define an enum to represent different parsers
-    #[derive(Debug, Copy, Clone)]
-    enum AnyParser {
-        Mqtt(MqttParser),
-        Coap(CoapParser),
-        Modbus(ModbusParser),
-    }
-
-    // Create instances of all available parsers
-    let parsers = vec![
+    // Unified parser handling
+    let parsers = [
         AnyParser::Mqtt(MqttParser::new()),
         AnyParser::Coap(CoapParser::new()),
         AnyParser::Modbus(ModbusParser::new()),
     ];
 
-    // Iterate and attempt to parse the packet with each parser
     for parser in parsers {
         match parser {
-            AnyParser::Mqtt(p) => match p.parse(&event.payload) {
-                Ok(packet) => {
+            AnyParser::Mqtt(p) => {
+                if let Ok(packet) = p.parse(&event.payload) {
                     let start_time = Instant::now();
                     let matches = signature_engine.buffer_scan(packet.payload());
-                    let elapsed_time = start_time.elapsed();
                     metrics
                         .detection_latency
-                        .observe(elapsed_time.as_nanos() as f64);
+                        .observe(start_time.elapsed().as_nanos() as f64);
 
                     if !matches.is_empty() {
                         handle_detection_match(metrics).await;
                     }
+                    break;
                 }
-                Err(e) => {
-                    debug!("Parse error with MQTT: {:?}", e);
-                    continue;
-                }
-            },
-            AnyParser::Coap(p) => match p.parse(&event.payload) {
-                Ok(packet) => {
+            }
+            AnyParser::Coap(p) => {
+                if let Ok(packet) = p.parse(&event.payload) {
                     let start_time = Instant::now();
                     let matches = signature_engine.buffer_scan(packet.payload());
-                    let elapsed_time = start_time.elapsed();
                     metrics
                         .detection_latency
-                        .observe(elapsed_time.as_nanos() as f64);
+                        .observe(start_time.elapsed().as_nanos() as f64);
 
                     if !matches.is_empty() {
                         handle_detection_match(metrics).await;
                     }
+                    break;
                 }
-                Err(e) => {
-                    debug!("Parse error with Coap: {:?}", e);
-                    continue;
-                }
-            },
-            AnyParser::Modbus(p) => match p.parse(&event.payload) {
-                Ok(packet) => {
+            }
+            AnyParser::Modbus(p) => {
+                if let Ok(packet) = p.parse(&event.payload) {
                     let start_time = Instant::now();
                     let matches = signature_engine.buffer_scan(packet.payload());
-                    let elapsed_time = start_time.elapsed();
                     metrics
                         .detection_latency
-                        .observe(elapsed_time.as_nanos() as f64);
+                        .observe(start_time.elapsed().as_nanos() as f64);
 
                     if !matches.is_empty() {
                         handle_detection_match(metrics).await;
                     }
+                    break;
                 }
-                Err(e) => {
-                    debug!("Parse error with Modbus: {:?}", e);
-                    continue;
-                }
-            },
+            }
         }
     }
 }
 
-/// Internal function to handle detection events.
-/// It attempts to block an IP address (dummy implementation) and logs the event.
-///
-/// # Arguments
-/// * metrics - Metrics recorder for telemetry.
-#[instrument(level = "debug", name = "handle_detection_match", skip(metrics))]
+/// Detection match handler with firewall integration
+#[instrument(level = "debug", skip(metrics))]
 async fn handle_detection_match(metrics: &MetricsRecorder) {
-    let block_result = Firewall::new("dummy_interface")
-        .and_then(|mut fw| fw.block_ip(Ipv4Addr::new(127, 0, 0, 1)));
+    const BLOCK_IP: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 1);
 
-    match block_result {
+    match Firewall::new("eth0").and_then(|mut fw| fw.block_ip(BLOCK_IP)) {
         Ok(_) => {
             metrics.processed_events.inc();
             EventLogger::log_event(
                 "firewall_block",
-                vec![KeyValue::new("ip_address", "127.0.0.1")],
+                vec![KeyValue::new("ip_address", BLOCK_IP.to_string())],
             )
             .await;
         }
         Err(e) => {
-            error!("Firewall block error: {:?}", e);
+            error!("Firewall error: {}", e);
             EventLogger::log_event(
                 "firewall_error",
                 vec![
@@ -395,43 +252,119 @@ async fn handle_detection_match(metrics: &MetricsRecorder) {
     }
 }
 
-/// Internal function to run the capture loop using pcap.
-///
-/// # Arguments
-/// * interface - The network interface name.
-/// * buffer_size - Maximum capture buffer size.
-/// * promiscuous - Whether to run in promiscuous mode.
-/// * terminate - A flag that, when set, causes the capture loop to exit.
-/// * event_bus - The shared event bus to which captured packets are enqueued.
-#[instrument(level = "debug", name = "run_capture_loop", skip(interface, event_bus))]
-async fn run_capture_loop(
-    interface: &str,
-    buffer_size: usize,
-    promiscuous: bool,
-    terminate: &Arc<AtomicBool>,
-    event_bus: Arc<EventBus>,
+/// Validation and logging helpers
+fn validate_simulation_hash(
+    scenario: &Scenario,
+    actual_hash: String,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    capture::run_capture_loop(
-        interface,
-        buffer_size,
-        promiscuous,
-        terminate,
-        &mut move |packet: &vakthund_capture::packet::Packet| {
-            push_captured_packet(packet, Arc::clone(&event_bus));
-        },
-    );
+    if actual_hash != scenario.expected_hash {
+        let error = format!(
+            "Hash mismatch!\nExpected: {}\nActual: {}",
+            scenario.expected_hash, actual_hash
+        );
+        generate_bug_report(&error);
+        Err(error.into())
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_simulation_result(
+    expected_hash: Option<&str>,
+    actual_hash: &str,
+    config: &VakthundConfig,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if let Some(expected) = expected_hash {
+        if actual_hash != expected {
+            let error = format!(
+                "Validation failed!\nExpected: {}\nActual: {}\nConfig: {:?}",
+                expected, actual_hash, config
+            );
+            generate_bug_report(&error);
+            return Err(error.into());
+        }
+    }
     Ok(())
 }
 
-/// Internal function to enqueue a captured packet onto the event bus.
-///
-/// # Arguments
-/// * packet - The captured packet.
-/// * event_bus - The shared event bus.
-#[instrument(level = "debug", name = "enqueue_captured_packet", skip(event_bus))]
-fn push_captured_packet(packet: &vakthund_capture::packet::Packet, event_bus: Arc<EventBus>) {
-    let timestamp = Instant::now().elapsed().as_nanos() as u64;
-    let event = NetworkEvent::new(timestamp, packet.data.clone());
-    event_bus.send_blocking(event);
-    info!("Captured packet with {} bytes", packet.data.len());
+/// Configuration loading helper
+fn load_simulator_config() -> Result<SimulatorConfig, Box<dyn std::error::Error + Send + Sync>> {
+    let path = "config/simulator.yaml";
+    if Path::new(path).exists() {
+        Ok(figment::Figment::new()
+            .merge(figment::providers::Yaml::file(path))
+            .extract()?)
+    } else {
+        Ok(SimulatorConfig::default())
+    }
+}
+
+async fn spawn_production_tasks(
+    interface: String,
+    buffer_size: usize,
+    promiscuous: bool,
+    event_bus: Arc<EventBus>,
+    metrics: MetricsRecorder,
+) -> (
+    tokio::task::JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>>,
+    tokio::task::JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>>,
+) {
+    let terminate = Arc::new(AtomicBool::new(false));
+    let event_bus_clone = Arc::clone(&event_bus);
+
+    // Inside spawn_production_tasks
+    let interface_clone = interface.clone();
+    let capture_handle = tokio::spawn(async move {
+        capture::run_capture_loop(
+            &interface_clone, // Use cloned String
+            buffer_size,
+            promiscuous,
+            &terminate,
+            |packet| {
+                let event = NetworkEvent::new(
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_nanos() as u64,
+                    packet.data.clone(),
+                );
+                event_bus_clone.send_blocking(event);
+            },
+        );
+        Ok(())
+    });
+    // Spawn the processing task
+    let processor_handle =
+        tokio::spawn(async move { process_events_from_bus(event_bus, metrics).await });
+
+    (processor_handle, capture_handle)
+}
+
+/// Generates a bug report file with diagnostic information
+pub fn generate_bug_report(report: &str) {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let filename = format!("bug_{}.yaml", timestamp);
+
+    File::create(&filename)
+        .and_then(|mut f| f.write_all(report.as_bytes()))
+        .unwrap_or_else(|_| panic!("Failed to create bug report {}", filename));
+
+    println!("Bug report saved to {}", filename);
+}
+
+/// Saves simulation state to a scenario file
+pub fn save_scenario(simulator: &Simulator, seed: u64, config: &SimulatorConfig) {
+    let scenario = Scenario {
+        seed,
+        config: config.clone(),
+        events: simulator.get_recorded_events(),
+        expected_hash: simulator.finalize_hash(),
+    };
+
+    scenario
+        .save_to_file(format!("scenario_{}.vscenario", seed))
+        .unwrap_or_else(|_| panic!("Failed to save scenario for seed {}", seed));
 }

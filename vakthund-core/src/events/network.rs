@@ -1,15 +1,18 @@
 //! Network event types and payload handling.
 
 use bytes::Bytes;
+use serde::Deserialize;
+use serde::Serialize;
 use std::net::SocketAddr;
 
 /// Protocol-agnostic network event with metadata
-#[derive(Clone, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct NetworkEvent {
     /// Monotonic timestamp in nanoseconds from system/clock
     pub timestamp: u64,
 
     /// Immutable payload buffer using zero-copy semantics
+    #[serde(with = "Bytes")]
     pub payload: Bytes,
 
     /// Optional source address for network context
