@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 clap = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+figment = { workspace = true }
 
 vakthund-engine = { path = "../vakthund-engine" }
 vakthund-telemetry = { path = "../vakthund-telemetry" }

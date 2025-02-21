@@ -9,7 +9,6 @@ tracing = { workspace = true }
 opentelemetry = { workspace = true }
 bytes = { workspace = true }
 hex = { workspace = true }
-figment = { workspace = true }
 anyhow = { workspace = true }
 
 vakthund-core = { path = "../vakthund-core" }

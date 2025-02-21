@@ -9,13 +9,12 @@ use std::{
     fs::File,
     io::Write,
     net::Ipv4Addr,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{atomic::AtomicBool, Arc},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::Context;
-use figment::providers::Format;
 use opentelemetry::KeyValue;
 use tracing::{debug, error, info, instrument, Instrument};
 
@@ -61,6 +60,7 @@ pub async fn run_production_mode(
 /// Main simulation mode execution flow
 #[instrument(level = "info", name = "run_simulation_mode", skip(metrics))]
 pub async fn run_simulation_mode<P: AsRef<Path> + Debug>(
+    sim_config: SimulatorConfig,
     scenario_path: Option<P>,
     num_events: usize,
     seed: u64,
@@ -78,7 +78,7 @@ pub async fn run_simulation_mode<P: AsRef<Path> + Debug>(
         }
         None => {
             let config = VakthundConfig::load()?;
-            let sim_config = load_simulator_config()?;
+            debug!("Loaded configuration {:?}", config);
 
             let effective_seed = if seed != 0 { seed } else { sim_config.seed };
             let event_bus = Arc::new(
@@ -114,6 +114,37 @@ pub async fn run_simulation_mode<P: AsRef<Path> + Debug>(
             Ok(())
         }
     }
+}
+
+/// Main fuzz mode execution flow
+#[instrument(level = "info", name = "run_fuzz_mode", skip(metrics))]
+pub async fn run_fuzz_mode(
+    mut seed: u64,
+    iterations: usize,
+    max_events: usize,
+    metrics: MetricsRecorder,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut count = 0;
+    loop {
+        let sim_config = SimulatorConfig::generate_fuzz_config(seed);
+        let _ = run_simulation_mode::<PathBuf>(
+            sim_config,
+            None,
+            max_events,
+            seed,
+            None,
+            metrics.clone(),
+        )
+        .await;
+
+        if iterations > 0 && count >= iterations {
+            break;
+        }
+
+        seed += 1;
+        count += 1;
+    }
+    Ok(())
 }
 
 /// Spawns parallel tasks for simulation processing
@@ -285,18 +316,6 @@ fn validate_simulation_result(
         }
     }
     Ok(())
-}
-
-/// Configuration loading helper
-fn load_simulator_config() -> Result<SimulatorConfig, Box<dyn std::error::Error + Send + Sync>> {
-    let path = "config/simulator.yaml";
-    if Path::new(path).exists() {
-        Ok(figment::Figment::new()
-            .merge(figment::providers::Yaml::file(path))
-            .extract()?)
-    } else {
-        Ok(SimulatorConfig::default())
-    }
 }
 
 async fn spawn_production_tasks(
