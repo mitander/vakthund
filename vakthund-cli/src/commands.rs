@@ -1,13 +1,8 @@
-use std::path::Path;
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
 
-use vakthund_config::SimulatorConfig;
-use vakthund_engine::run_fuzz_mode;
-use vakthund_engine::run_production_mode;
-use vakthund_engine::run_simulation_mode;
-use vakthund_telemetry::metrics::MetricsRecorder;
+use vakthund_telemetry::logging::EventLogger;
 
 #[derive(Parser)]
 #[command(version, about)]
@@ -28,8 +23,13 @@ pub enum Commands {
 
 #[derive(Args, Debug, Clone)]
 pub struct RunArgs {
+    /// Network interface to monitor
     #[arg(short, long)]
     pub interface: String,
+
+    /// Validate config before running
+    #[arg(long, default_value_t = true)]
+    pub validate: bool,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -60,37 +60,43 @@ pub struct FuzzArgs {
 }
 
 pub async fn run_command(cli: Cli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let metrics = MetricsRecorder::new();
-    vakthund_telemetry::logging::EventLogger::init();
+    EventLogger::init();
 
     match cli.command {
-        Commands::Run(run_args) => run_production_mode(&run_args.interface, metrics).await,
+        Commands::Run(run_args) => {
+            let config = vakthund_config::VakthundConfig::load()?;
+            let runtime = std::sync::Arc::new(vakthund_engine::SimulationRuntime::new(config));
+            runtime
+                .run_production(&run_args.interface)
+                .await
+                .map_err(|e| e.into())
+        }
         Commands::Simulate(sim_args) => {
-            let path = "config/simulator.yaml";
-            let sim_config = if Path::new(path).exists() {
-                SimulatorConfig::load_from_path(path)?
-            } else {
-                SimulatorConfig::default()
-            };
+            let config = vakthund_config::VakthundConfig::load()?;
+            let runtime_config = config.clone();
 
-            run_simulation_mode(
-                sim_config,
-                sim_args.scenario,
-                sim_args.events,
+            let runtime =
+                std::sync::Arc::new(vakthund_engine::SimulationRuntime::new(runtime_config));
+
+            // Use original config for simulator parameters
+            let simulator = vakthund_simulator::Simulator::new(
                 sim_args.seed,
-                sim_args.validate_hash.as_deref(),
-                metrics,
-            )
-            .await
+                false,
+                config.monitor.thresholds.packet_rate as u64,
+                config.monitor.thresholds.connection_rate as u64,
+                Some(runtime.event_bus.clone()),
+            );
+
+            runtime.run_simulator(simulator, sim_args.events).await?;
+            Ok(())
         }
         Commands::Fuzz(fuzz_args) => {
-            run_fuzz_mode(
-                fuzz_args.seed,
-                fuzz_args.iterations,
-                fuzz_args.max_events,
-                metrics,
-            )
-            .await
+            let config = vakthund_config::VakthundConfig::load()?;
+            let runtime = std::sync::Arc::new(vakthund_engine::SimulationRuntime::new(config));
+            runtime
+                .run_fuzz_testing(fuzz_args.seed, fuzz_args.iterations, fuzz_args.max_events)
+                .await
+                .map_err(|e| e.into())
         }
     }
 }

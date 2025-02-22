@@ -11,3 +11,4 @@ figment = { workspace = true }
 vakthund-engine = { path = "../vakthund-engine" }
 vakthund-telemetry = { path = "../vakthund-telemetry" }
 vakthund-config = { path = "../vakthund-config" }
+vakthund-simulator = { path = "../vakthund-simulator" }

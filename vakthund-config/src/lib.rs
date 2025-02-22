@@ -43,7 +43,7 @@ pub use simulator::SimulatorConfig;
 pub use telemetry::TelemetryConfig;
 
 /// Top‑level configuration container for all Vakthund components.
-#[derive(Debug, Serialize, Deserialize, Validate, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, Validate, Default)]
 pub struct VakthundConfig {
     /// Core system configuration (event bus, memory, scheduling).
     #[validate(nested)]

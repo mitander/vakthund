@@ -4,18 +4,22 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true }
 opentelemetry = { workspace = true }
-bytes = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_yaml = { workspace = true }
+parking_lot = { workspace = true }
+thiserror = { workspace = true }
+blake3 = { workspace = true }
 hex = { workspace = true }
 anyhow = { workspace = true }
 
 vakthund-core = { path = "../vakthund-core" }
 vakthund-simulator = { path = "../vakthund-simulator" }
+vakthund-config = { path = "../vakthund-config" }
 vakthund-telemetry = { path = "../vakthund-telemetry" }
 vakthund-detection = { path = "../vakthund-detection" }
-vakthund-prevention = { path = "../vakthund-prevention" }
 vakthund-protocols = { path = "../vakthund-protocols" }
+vakthund-prevention = { path = "../vakthund-prevention" }
 vakthund-capture = { path = "../vakthund-capture" }
-vakthund-config = { path = "../vakthund-config" }
