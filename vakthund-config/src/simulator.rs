@@ -66,12 +66,11 @@ impl SimulatorConfig {
             })
     }
 
-    pub fn generate_fuzz_config(seed: u64) -> SimulatorConfig {
+    pub fn generate_fuzz_config(seed: u64, max_events: usize) -> SimulatorConfig {
         let mut rng = StdRng::seed_from_u64(seed);
-
         SimulatorConfig {
             seed,
-            event_count: rng.random_range(1000..100_000),
+            event_count: rng.random_range(100..=max_events),
             chaos: ChaosConfig {
                 fault_probability: rng.random_range(0.0..0.2),
             },

@@ -316,7 +316,7 @@ impl SimulationRuntime {
             }
 
             let current_seed = seed + current_iteration as u64;
-            let sim_config = SimulatorConfig::generate_fuzz_config(current_seed);
+            let sim_config = SimulatorConfig::generate_fuzz_config(current_seed, max_events);
 
             // Initial warning for infinite mode
             if current_iteration == 0 && iterations == 0 {
@@ -331,12 +331,14 @@ impl SimulationRuntime {
 
             debug!(
                 "Simulator configuration:\n\
-            - Chaos probability: {:.2}%\n\
-            - Base latency: {}ms\n\
-            - Max jitter: {}ms",
+                - Chaos probability: {:.2}%\n\
+                - Base latency: {}ms\n\
+                - Max jitter: {}ms\n\
+                - Simulated events: {}",
                 sim_config.chaos.fault_probability * 100.0,
                 sim_config.network.latency_ms,
-                sim_config.network.jitter_ms
+                sim_config.network.jitter_ms,
+                sim_config.event_count,
             );
 
             let mut simulator = Simulator::new(
@@ -348,8 +350,8 @@ impl SimulationRuntime {
             );
 
             // Corrected event generation
-            let mut events = Vec::with_capacity(max_events);
-            for event_id in 0..max_events {
+            let mut events = Vec::with_capacity(sim_config.event_count);
+            for event_id in 0..sim_config.event_count {
                 if let Some(event) = simulator.simulate_event(event_id) {
                     events.push(Some(event));
                 }
@@ -373,7 +375,7 @@ impl SimulationRuntime {
             }
 
             current_iteration += 1;
-            // tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
 
         Ok(())
