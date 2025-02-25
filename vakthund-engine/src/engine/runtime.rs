@@ -1,5 +1,3 @@
-// vakthund-engine/src/engine/runtime.rs
-
 //! Simulation runtime core - coordinates execution of detection, prevention, and simulation components
 
 use std::sync::atomic::AtomicBool;
@@ -55,7 +53,7 @@ impl SimulationRuntime {
 
         let event_bus = Arc::new(
             EventBus::with_capacity(config.core.event_bus.capacity)
-                .unwrap_or_else(|e| panic!("Failed to create event bus: {}", e)),
+                .expect("Failed to create event bus"),
         );
 
         Self {
@@ -73,7 +71,7 @@ impl SimulationRuntime {
     /// * `interface` - Network interface name to monitor
     #[instrument(skip_all, fields(interface = %interface))]
     pub async fn run_production(self: Arc<Self>, interface: &str) -> Result<(), SimulationError> {
-        info!("Starting production mode on {}", interface);
+        info!("Starting production mode on {interface}");
         debug!("Using capture config: {:?}", self.config.capture);
 
         let terminate = Arc::new(AtomicBool::new(false));
@@ -93,7 +91,7 @@ impl SimulationRuntime {
             let config = self.config.capture.clone();
 
             move || {
-                info!("Starting packet capture on {}", interface);
+                info!("Starting packet capture on {interface}");
                 vakthund_capture::capture::run_capture_loop(
                     &interface,
                     config.buffer_size,
@@ -104,7 +102,7 @@ impl SimulationRuntime {
 
                         let timestamp = SystemTime::now()
                             .duration_since(UNIX_EPOCH)
-                            .unwrap()
+                            .expect("Time went backwards")
                             .as_nanos() as u64;
 
                         let event = NetworkEvent {
@@ -116,7 +114,7 @@ impl SimulationRuntime {
 
                         debug!("Queueing network event");
                         if let Err(e) = event_bus.send(event) {
-                            warn!("Failed to queue event: {}", e);
+                            warn!("Failed to queue event: {e}");
                         }
                     },
                 )
@@ -129,18 +127,18 @@ impl SimulationRuntime {
         // Handle processor task completion
         let _ = processor_result
             .map_err(|e| {
-                error!("Processor task panicked: {}", e);
-                SimulationError::Processing(format!("Processor panic: {}", e))
+                error!("Processor task panicked: {e}");
+                SimulationError::Processing(format!("Processor panic: {e}"))
             })?
             .map_err(|e| {
-                error!("Event processing failed: {}", e);
+                error!("Event processing failed: {e}");
                 e
             })?;
 
         // Handle capture task completion
         capture_result.map_err(|e| {
-            error!("Capture task failed: {}", e);
-            SimulationError::Processing(format!("Capture failure: {}", e))
+            error!("Capture task failed: {e}");
+            SimulationError::Processing(format!("Capture failure: {e}"))
         })?;
 
         info!("Production mode shutdown complete");
@@ -197,6 +195,7 @@ impl SimulationRuntime {
         // Convert JoinError to SimulationError
         let _processor_result =
             processor_result.map_err(|e| SimulationError::Processing(e.to_string()))??;
+
         let actual_hash =
             simulator_result.map_err(|e| SimulationError::Processing(e.to_string()))??;
 
@@ -216,29 +215,24 @@ impl SimulationRuntime {
         simulator: Simulator,
         event_count: usize,
     ) -> Result<String, SimulationError> {
-        debug!("Initializing simulator with {} events", event_count);
+        debug!("Initializing simulator with {event_count} events");
         *self.simulator.lock() = Some(simulator);
 
+        let event_bus = self.event_bus.clone();
+        let mut simulator_guard = self.simulator.lock();
+        let simulator = simulator_guard.as_mut().expect("Simulator was just set");
+
         for event_id in 0..event_count {
-            if let Some(sim) = self.simulator.lock().as_mut() {
-                trace!("Generating event {}", event_id);
-                if let Some(event) = sim.simulate_event(event_id) {
-                    debug!("Dispatching simulated event");
-                    if let Err(e) = self.event_bus.send(event) {
-                        warn!("Failed to send simulated event: {}", e);
-                    }
+            trace!("Generating event {event_id}");
+            if let Some(event) = simulator.simulate_event(event_id) {
+                debug!("Dispatching simulated event");
+                if let Err(e) = event_bus.send(event) {
+                    warn!("Failed to send simulated event: {e}");
                 }
             }
         }
 
-        self.simulator
-            .lock()
-            .as_ref()
-            .map(|s| s.finalize_hash())
-            .ok_or_else(|| {
-                error!("Simulator not initialized");
-                SimulationError::Processing("Simulator not initialized".into())
-            })
+        Ok(simulator.finalize_hash())
     }
 
     /// Validates scenario execution against expected hash
@@ -262,7 +256,7 @@ impl SimulationRuntime {
             );
 
             let filename = self.diagnostics.lock().record_bug_report(&report);
-            error!("Bug report saved to: {}", filename);
+            error!("Bug report saved to: {filename}");
 
             Err(SimulationError::Validation(report))
         } else {
@@ -293,21 +287,26 @@ impl SimulationRuntime {
         };
 
         debug!(
-            "\nFuzz configuration:\n\
-        - Base seed: {}\n\
-        - Iterations: {}\n\
-        - Max events/iteration: {}\n\
-        - Chaos enabled: true\n\
-        - Packet rate: {}/s\n\
-        - Latency: {}ms\n\
-        - Jitter: {}ms",
-            seed,
-            iterations_str,
-            max_events,
+            "Fuzz configuration:\n\
+            - Base seed: {seed}\n\
+            - Iterations: {iterations_str}\n\
+            - Max events/iteration: {max_events}\n\
+            - Chaos enabled: true\n\
+            - Packet rate: {}/s\n\
+            - Latency: {}ms\n\
+            - Jitter: {}ms",
             self.config.monitor.thresholds.packet_rate,
             self.config.monitor.thresholds.data_volume,
             self.config.monitor.thresholds.connection_rate
         );
+
+        // Initial warning for infinite mode
+        if iterations == 0 {
+            warn!("Infinite fuzz mode activated (Ctrl-C to exit)");
+        }
+
+        let signature_engine = SignatureEngine::new();
+        let metrics = self.metrics.clone();
 
         let mut current_iteration = 0;
         loop {
@@ -318,15 +317,9 @@ impl SimulationRuntime {
             let current_seed = seed + current_iteration as u64;
             let sim_config = SimulatorConfig::generate_fuzz_config(current_seed, max_events);
 
-            // Initial warning for infinite mode
-            if current_iteration == 0 && iterations == 0 {
-                warn!("Infinite fuzz mode activated (Ctrl-C to exit)");
-            }
-
             debug!(
-                "Starting fuzz iteration {} with seed {}",
-                current_iteration + 1,
-                current_seed
+                "Starting fuzz iteration {} with seed {current_seed}",
+                current_iteration + 1
             );
 
             debug!(
@@ -349,28 +342,23 @@ impl SimulationRuntime {
                 Some(self.event_bus.clone()),
             );
 
-            // Corrected event generation
-            let mut events = Vec::with_capacity(sim_config.event_count);
-            for event_id in 0..sim_config.event_count {
-                if let Some(event) = simulator.simulate_event(event_id) {
-                    events.push(Some(event));
-                }
-            }
+            // Generate and collect events
+            let events = (0..sim_config.event_count)
+                .filter_map(|event_id| simulator.simulate_event(event_id))
+                .collect::<Vec<_>>();
 
             debug!("Generated {} valid fuzzed events", events.len());
-            process_events(events, &SignatureEngine::new(), &self.metrics).await;
+            process_events(events, &signature_engine, &metrics).await;
 
             info!(
-                "Completed fuzz iteration {} with seed {}",
-                current_iteration + 1,
-                current_seed
+                "Completed fuzz iteration {} with seed {current_seed}",
+                current_iteration + 1
             );
 
             if iterations > 0 && (current_iteration + 1) % 10 == 0 {
                 info!(
-                    "Progress: {}/{} iterations",
-                    current_iteration + 1,
-                    iterations
+                    "Progress: {}/{iterations} iterations",
+                    current_iteration + 1
                 );
             }
 
@@ -456,48 +444,64 @@ async fn process_network_event(
 /// * `matches` - Detected pattern matches
 /// * `protocol` - Protocol type where matches were found
 async fn handle_detection_results(matches: Vec<usize>, protocol: &str) {
-    if !matches.is_empty() {
-        info!(
-            "Detected {} suspicious patterns in {}",
-            matches.len(),
-            protocol
-        );
-        match Firewall::new("eth0") {
-            Ok(mut fw) => {
-                const BLOCK_IP: std::net::Ipv4Addr = std::net::Ipv4Addr::new(127, 0, 0, 1);
-                if let Err(e) = fw.block_ip(BLOCK_IP) {
-                    error!("Firewall block failed: {}", e);
-                    EventLogger::log_event(
-                        "firewall_error",
-                        vec![
-                            KeyValue::new("error", e.to_string()),
-                            KeyValue::new("action", "block_ip"),
-                        ],
-                    )
-                    .await;
-                } else {
-                    info!("Successfully blocked IP: {}", BLOCK_IP);
-                    EventLogger::log_event(
-                        "firewall_block",
-                        vec![KeyValue::new("ip_address", BLOCK_IP.to_string())],
-                    )
-                    .await;
-                }
-            }
-            Err(e) => error!("Firewall initialization failed: {}", e),
-        }
+    if matches.is_empty() {
+        return;
     }
+
+    info!(
+        "Detected {} suspicious patterns in {protocol}",
+        matches.len()
+    );
+
+    let fw = match Firewall::new("eth0") {
+        Ok(fw) => fw,
+        Err(e) => {
+            error!("Firewall initialization failed: {e}");
+            return;
+        }
+    };
+
+    const BLOCK_IP: std::net::Ipv4Addr = std::net::Ipv4Addr::new(127, 0, 0, 1);
+
+    let result = block_ip_and_log(fw, BLOCK_IP).await;
+    if let Err(e) = result {
+        error!("Firewall block failed: {e}");
+    }
+}
+
+async fn block_ip_and_log(mut firewall: Firewall, ip: std::net::Ipv4Addr) -> Result<(), String> {
+    if let Err(e) = firewall.block_ip(ip) {
+        let error_msg = e.to_string();
+        EventLogger::log_event(
+            "firewall_error",
+            vec![
+                KeyValue::new("error", error_msg.clone()),
+                KeyValue::new("action", "block_ip"),
+            ],
+        )
+        .await;
+        return Err(error_msg);
+    }
+
+    info!("Successfully blocked IP: {ip}");
+    EventLogger::log_event(
+        "firewall_block",
+        vec![KeyValue::new("ip_address", ip.to_string())],
+    )
+    .await;
+
+    Ok(())
 }
 
 #[instrument(skip_all, fields(total_events = events.len()))]
 async fn process_events(
-    events: Vec<Option<NetworkEvent>>,
+    events: Vec<NetworkEvent>,
     signature_engine: &SignatureEngine,
     metrics: &MetricsRecorder,
 ) {
     debug!("Processing {} fuzzed events", events.len());
 
-    for (idx, event) in events.into_iter().flatten().enumerate() {
+    for (idx, event) in events.into_iter().enumerate() {
         trace!("Processing fuzzed event {}: {:?}", idx + 1, event);
 
         // 1. Validate basic event structure
@@ -515,11 +519,7 @@ async fn process_events(
             .detection_latency
             .observe(processing_time.as_nanos() as f64);
 
-        debug!(
-            "Processed fuzzed event {} in {:?}",
-            idx + 1,
-            processing_time
-        );
+        debug!("Processed fuzzed event {} in {processing_time:?}", idx + 1);
 
         // 5. Simulate real-time processing delay
         tokio::time::sleep(Duration::from_millis(10)).await;
