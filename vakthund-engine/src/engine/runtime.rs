@@ -1,13 +1,12 @@
 //! Simulation runtime core - coordinates execution of detection, prevention, and simulation components
-
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use opentelemetry::KeyValue;
 use parking_lot::Mutex;
 use tokio::task::JoinHandle;
-use tokio::time::Duration;
+use tokio::time::sleep;
 use tracing::{debug, error, info, instrument, trace, warn};
 
 use vakthund_config::{SimulatorConfig, VakthundConfig};
@@ -16,20 +15,16 @@ use vakthund_detection::signatures::SignatureEngine;
 use vakthund_prevention::firewall::Firewall;
 use vakthund_protocols::{AnyParser, CoapParser, ModbusParser, MqttParser};
 use vakthund_simulator::{Scenario, Simulator};
-use vakthund_telemetry::logging::EventLogger;
-use vakthund_telemetry::MetricsRecorder;
+use vakthund_telemetry::{logging::EventLogger, MetricsRecorder};
 
 use crate::engine::{diagnostics::DiagnosticsCollector, error::SimulationError};
 
-/// Central coordination point for system operations. Manages:
-/// - Event bus communication
-/// - Simulation state
-/// - Telemetry collection
-/// - Diagnostics reporting
+/// Coordinates system operations in Vakthund, including event processing, simulation,
+/// fuzz testing, and scenario-based execution.
 pub struct SimulationRuntime {
     /// System configuration parameters
     config: Arc<VakthundConfig>,
-    /// Event bus for cross-component communication
+    /// Event bus for cross-component communication (SPSC)
     pub event_bus: Arc<EventBus>,
     /// Current simulation state (if running)
     simulator: Mutex<Option<Simulator>>,
@@ -40,10 +35,7 @@ pub struct SimulationRuntime {
 }
 
 impl SimulationRuntime {
-    /// Creates a new simulation runtime with loaded configuration
-    ///
-    /// # Arguments
-    /// * `config` - Fully validated system configuration
+    /// Creates a new simulation runtime with loaded configuration.
     ///
     /// # Panics
     /// If event bus creation fails due to invalid capacity
@@ -65,7 +57,8 @@ impl SimulationRuntime {
         }
     }
 
-    /// Starts production mode operation on specified network interface
+    /// Runs in "production mode," capturing live packets from a specified network interface.
+    /// Then it sends them to the event bus and processes them in a background task.
     ///
     /// # Arguments
     /// * `interface` - Network interface name to monitor
@@ -77,14 +70,14 @@ impl SimulationRuntime {
         let terminate = Arc::new(AtomicBool::new(false));
         let event_bus = self.event_bus.clone();
 
-        // Spawn event processor
+        // Spawn event processor (drains the bus in the background)
         let processor_self = self.clone();
         let processor = tokio::spawn(async move {
             debug!("Spawning event processor thread");
             processor_self.spawn_event_processor().await
         });
 
-        // Start capture loop
+        // Start capture loop on a blocking thread
         let capture_task = tokio::task::spawn_blocking({
             let interface = interface.to_string();
             let event_bus = event_bus.clone();
@@ -145,7 +138,10 @@ impl SimulationRuntime {
         Ok(())
     }
 
-    /// Creates and spawns the event processing pipeline
+    /// Spawns a dedicated event processor task that continuously calls `recv()`
+    /// on the EventBus. Each event is immediately processed in `process_network_event`.
+    ///
+    /// This loop runs forever unless externally cancelled or aborted.
     #[instrument(skip(self))]
     fn spawn_event_processor(&self) -> JoinHandle<Result<(), SimulationError>> {
         debug!("Initializing event processor");
@@ -157,21 +153,30 @@ impl SimulationRuntime {
             info!("Event processor started");
             let mut processed_events = 0;
 
-            while let Some(event) = event_bus.recv() {
-                processed_events += 1;
-                trace!("Processing event #{}", processed_events);
-                process_network_event(&event, &signature_engine, &metrics).await;
-            }
+            loop {
+                match event_bus.recv() {
+                    Some(event) => {
+                        processed_events += 1;
+                        trace!("Processing event #{}", processed_events);
 
-            info!("Event processor shutdown");
-            Ok(())
+                        // Actual protocol/detection pipeline
+                        process_network_event(&event, &signature_engine, &metrics).await;
+                    }
+                    None => {
+                        // Queue empty, avoid busy-spin
+                        sleep(Duration::from_millis(10)).await;
+                    }
+                }
+            }
+            // Not expected to return normally unless aborted
         })
     }
 
-    /// Executes a predefined scenario
+    /// Runs a scenario-based simulation, pushing events onto the bus,
+    /// processed by the same background event processor.
     ///
     /// # Arguments
-    /// * `scenario` - Preloaded scenario definition
+    /// * `scenario` - Predefined scenario with known events
     #[instrument(skip(self, scenario))]
     pub async fn run_scenario(self: Arc<Self>, scenario: Scenario) -> Result<(), SimulationError> {
         info!("Starting scenario execution");
@@ -180,6 +185,7 @@ impl SimulationRuntime {
         let processor_self = self.clone();
         let processor = tokio::spawn(async move { processor_self.spawn_event_processor().await });
 
+        // Publish scenario events by running the simulator
         let self_clone = self.clone();
         let simulator_task = tokio::spawn({
             let scenario = scenario.clone();
@@ -204,10 +210,10 @@ impl SimulationRuntime {
         Ok(())
     }
 
-    /// Manages simulator execution
+    /// Manages simulator execution. Each simulated event is sent to the bus (or dropped).
     ///
     /// # Arguments
-    /// * `simulator` - Initialized simulator instance
+    /// * `simulator` - Simulator instance with the scenario or fuzz config
     /// * `event_count` - Number of events to generate
     #[instrument(skip(self, simulator))]
     pub async fn run_simulator(
@@ -235,11 +241,7 @@ impl SimulationRuntime {
         Ok(simulator.finalize_hash())
     }
 
-    /// Validates scenario execution against expected hash
-    ///
-    /// # Arguments
-    /// * `scenario` - Original scenario definition
-    /// * `actual_hash` - Hash generated during execution
+    /// Validates scenario execution hash against the expected result in the scenario.
     #[instrument(skip(self))]
     fn validate_scenario_hash(
         &self,
@@ -265,21 +267,23 @@ impl SimulationRuntime {
         }
     }
 
-    /// Executes fuzz testing with generated scenarios
+    /// Performs fuzz testing by repeatedly generating random (chaotic) simulator configurations.
+    /// Each iteration pushes events to the bus for the background event processor to handle.
     ///
     /// # Arguments
-    /// * `seed` - Base seed for random number generation
-    /// * `iterations` - Number of fuzzing iterations
-    /// * `max_events` - Maximum events per iteration
+    /// * `seed` - Base seed for RNG
+    /// * `iterations` - How many fuzz cycles to run (0 means infinite)
+    /// * `max_events` - Max number of events in each fuzz iteration
     #[instrument(skip(self))]
     pub async fn run_fuzz_testing(
-        &self,
+        self: Arc<Self>,
         seed: u64,
         iterations: usize,
         max_events: usize,
     ) -> Result<(), SimulationError> {
         info!("Starting fuzz testing");
 
+        // Log relevant config details
         let iterations_str = if iterations == 0 {
             "infinite".to_string()
         } else {
@@ -288,28 +292,32 @@ impl SimulationRuntime {
 
         debug!(
             "Fuzz configuration:\n\
-            - Base seed: {seed}\n\
-            - Iterations: {iterations_str}\n\
-            - Max events/iteration: {max_events}\n\
-            - Chaos enabled: true\n\
-            - Packet rate: {}/s\n\
-            - Latency: {}ms\n\
-            - Jitter: {}ms",
+             - Base seed: {seed}\n\
+             - Iterations: {iterations_str}\n\
+             - Max events/iteration: {max_events}\n\
+             - Chaos enabled: {}\n\
+             - Packet rate: {}/s\n\
+             - Latency: {}ms\n\
+             - Jitter: {}ms",
+            true, // or use self.config.* if you have a chaos-enabled setting
             self.config.monitor.thresholds.packet_rate,
             self.config.monitor.thresholds.data_volume,
             self.config.monitor.thresholds.connection_rate
         );
 
-        // Initial warning for infinite mode
         if iterations == 0 {
             warn!("Infinite fuzz mode activated (Ctrl-C to exit)");
         }
 
-        let signature_engine = SignatureEngine::new();
-        let metrics = self.metrics.clone();
+        // Spawn the event processor to drain the bus in the background
+        let processor_handle = tokio::spawn({
+            let this_arc = self.clone();
+            async move { this_arc.spawn_event_processor().await }
+        });
 
         let mut current_iteration = 0;
         loop {
+            // If a nonzero iteration count was given, break once we reach it
             if iterations > 0 && current_iteration >= iterations {
                 break;
             }
@@ -317,17 +325,18 @@ impl SimulationRuntime {
             let current_seed = seed + current_iteration as u64;
             let sim_config = SimulatorConfig::generate_fuzz_config(current_seed, max_events);
 
-            debug!(
+            info!(
                 "Starting fuzz iteration {} with seed {current_seed}",
                 current_iteration + 1
             );
 
+            // Log more details about the fuzz config
             debug!(
                 "Simulator configuration:\n\
-                - Chaos probability: {:.2}%\n\
-                - Base latency: {}ms\n\
-                - Max jitter: {}ms\n\
-                - Simulated events: {}",
+                 - Chaos probability: {:.2}%\n\
+                 - Base latency: {}ms\n\
+                 - Max jitter: {}ms\n\
+                 - Simulated events: {}",
                 sim_config.chaos.fault_probability * 100.0,
                 sim_config.network.latency_ms,
                 sim_config.network.jitter_ms,
@@ -342,46 +351,53 @@ impl SimulationRuntime {
                 Some(self.event_bus.clone()),
             );
 
-            // Generate and collect events
-            let events = (0..sim_config.event_count)
-                .filter_map(|event_id| simulator.simulate_event(event_id))
-                .collect::<Vec<_>>();
+            // Generate & push events
+            let mut generated = 0usize;
+            for event_id in 0..sim_config.event_count {
+                if let Some(event) = simulator.simulate_event(event_id) {
+                    generated += 1;
+                    if let Err(e) = self.event_bus.send(event) {
+                        warn!("Failed to queue fuzzed event: {e}");
+                    }
+                }
+            }
 
-            debug!("Generated {} valid fuzzed events", events.len());
-            process_events(events, &signature_engine, &metrics).await;
+            debug!("Generated {generated} events this iteration");
+
+            // Sleep to prevent spamming
+            sleep(Duration::from_secs(1)).await;
 
             info!(
                 "Completed fuzz iteration {} with seed {current_seed}",
                 current_iteration + 1
             );
 
+            // Optional iteration progress log
             if iterations > 0 && (current_iteration + 1) % 10 == 0 {
-                info!(
-                    "Progress: {}/{iterations} iterations",
-                    current_iteration + 1
-                );
+                info!("Progress: {}/{}", current_iteration + 1, iterations);
             }
 
             current_iteration += 1;
-            tokio::time::sleep(Duration::from_secs(1)).await;
         }
 
+        // We can keep the processor running if we want, or abort it after fuzz ends.
+        // Here, we abort once we've finished all iterations:
+        processor_handle.abort();
+
+        info!("Fuzz testing complete");
         Ok(())
     }
 }
 
-/// Processes network events through protocol parsers and detection engine
-///
-/// # Arguments
-/// * `event` - Network event to process
-/// * `signature_engine` - Detection rules engine
-/// * `metrics` - Metrics collection system
-#[instrument(skip_all, fields(event_id = %event.timestamp))]
+/// Processes a single network event through the detection pipeline.
+#[instrument(skip_all, level = "debug")]
 async fn process_network_event(
     event: &NetworkEvent,
     signature_engine: &SignatureEngine,
     metrics: &MetricsRecorder,
 ) {
+    // The function name & arguments are at debug level.
+    // That means “enter” logs only show if RUST_LOG=debug or lower.
     debug!("Processing network event ({} bytes)", event.payload.len());
 
     let parsers = [
@@ -438,11 +454,7 @@ async fn process_network_event(
     warn!("No compatible protocol parser found");
 }
 
-/// Handles detection results and triggers prevention mechanisms
-///
-/// # Arguments
-/// * `matches` - Detected pattern matches
-/// * `protocol` - Protocol type where matches were found
+/// Handles detection results (e.g., malicious signatures) and triggers prevention actions.
 async fn handle_detection_results(matches: Vec<usize>, protocol: &str) {
     if matches.is_empty() {
         return;
@@ -491,37 +503,4 @@ async fn block_ip_and_log(mut firewall: Firewall, ip: std::net::Ipv4Addr) -> Res
     .await;
 
     Ok(())
-}
-
-#[instrument(skip_all, fields(total_events = events.len()))]
-async fn process_events(
-    events: Vec<NetworkEvent>,
-    signature_engine: &SignatureEngine,
-    metrics: &MetricsRecorder,
-) {
-    debug!("Processing {} fuzzed events", events.len());
-
-    for (idx, event) in events.into_iter().enumerate() {
-        trace!("Processing fuzzed event {}: {:?}", idx + 1, event);
-
-        // 1. Validate basic event structure
-        debug_assert!(!event.payload.is_empty(), "Empty payload in fuzzed event");
-
-        // 2. Measure processing latency
-        let start_time = std::time::Instant::now();
-
-        // 3. Run through full detection pipeline
-        process_network_event(&event, signature_engine, metrics).await;
-
-        // 4. Record performance metrics
-        let processing_time = start_time.elapsed();
-        metrics
-            .detection_latency
-            .observe(processing_time.as_nanos() as f64);
-
-        debug!("Processed fuzzed event {} in {processing_time:?}", idx + 1);
-
-        // 5. Simulate real-time processing delay
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
 }

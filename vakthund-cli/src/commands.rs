@@ -92,8 +92,10 @@ pub async fn run_command(cli: Cli) -> Result<(), Box<dyn std::error::Error + Sen
         }
         Commands::Fuzz(fuzz_args) => {
             let config = vakthund_config::VakthundConfig::load()?;
-            let runtime = std::sync::Arc::new(vakthund_engine::SimulationRuntime::new(config));
-            runtime
+            let runtime = vakthund_engine::SimulationRuntime::new(config);
+            let runtime_arc = std::sync::Arc::new(runtime);
+
+            runtime_arc
                 .run_fuzz_testing(fuzz_args.seed, fuzz_args.iterations, fuzz_args.max_events)
                 .await
                 .map_err(|e| e.into())
