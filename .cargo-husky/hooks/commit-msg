@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+
+# Conventional Commits
+# https://www.conventionalcommits.org/en/v1.0.0-beta.2/
+MSG_FILE="$1"
+MSG=$(head -n 1 "$MSG_FILE")
+
+if ! echo "$MSG" | grep -Eq '^(feat|fix|chore|docs|style|refactor|perf|test)(!)?:( ).+'; then
+    echo "ERROR: Invalid commit message format."
+    echo "Use Conventional Commits: type: description"
+    echo "Example: feat: add new syntax analysis"
+    exit 1
+fi
+
+# Message format is valid
+exit 0
