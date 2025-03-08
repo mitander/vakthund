@@ -23,3 +23,7 @@ vakthund-detection = { path = "../vakthund-detection" }
 vakthund-protocols = { path = "../vakthund-protocols" }
 vakthund-prevention = { path = "../vakthund-prevention" }
 vakthund-capture = { path = "../vakthund-capture" }
+
+# TODO: We need to keep this here for now
+[dev-dependencies]
+cargo-husky = { version = "1", default-features = false, features = ["user-hooks"] }
