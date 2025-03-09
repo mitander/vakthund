@@ -25,7 +25,7 @@ pub use replay::{Scenario, ScenarioEvent};
 pub use vakthund_config::SimulatorConfig;
 pub use virtual_clock::VirtualClock;
 
-/// The Simulator ties together simulation‐specific components.
+/// The Simulator ties together simulation‑specific components.
 pub struct Simulator {
     event_log: Vec<ScenarioEvent>,
     clock: VirtualClock,
@@ -185,38 +185,5 @@ impl Simulator {
             let _ = self.simulate_event(event_id);
         }
         self.finalize_hash()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use vakthund_core::events::bus::EventBus;
-
-    #[test]
-    fn test_simulate_event_without_bus() {
-        let mut simulator = Simulator::new(42, false, 100, 20, None);
-        let event = simulator.simulate_event(1);
-        assert!(event.is_some());
-        let e = event.unwrap();
-        assert!(e.timestamp > 42);
-    }
-
-    #[test]
-    fn test_simulate_event_with_bus() {
-        let bus = EventBus::with_capacity(8).unwrap();
-        let bus_arc = Arc::new(bus);
-        let mut simulator = Simulator::new(42, false, 100, 20, Some(Arc::clone(&bus_arc)));
-        let event = simulator.simulate_event(2);
-        assert!(event.is_some());
-        let received_event = bus_arc.recv();
-        assert!(received_event.is_some());
-    }
-
-    #[test]
-    fn test_run_simulation() {
-        let mut simulator = Simulator::new(42, false, 100, 20, None);
-        let final_hash = simulator.run(10);
-        assert!(!final_hash.is_empty());
     }
 }

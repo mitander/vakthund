@@ -26,9 +26,10 @@ mod core;
 mod error;
 mod monitor;
 mod prevention;
+mod provider;
 mod simulator;
 mod telemetry;
-mod validation;
+mod validation; // Add the new module
 
 pub use capture::CaptureConfig;
 pub use core::CoreConfig;
@@ -37,10 +38,11 @@ pub use error::ConfigError;
 pub use monitor::MonitorConfig;
 pub use prevention::FirewallConfig;
 pub use prevention::PreventionConfig;
+pub use provider::ConfigProvider;
 pub use simulator::ChaosConfig;
 pub use simulator::NetworkModelConfig;
 pub use simulator::SimulatorConfig;
-pub use telemetry::TelemetryConfig;
+pub use telemetry::TelemetryConfig; // Export the trait
 
 /// Top‑level configuration container for all Vakthund components.
 #[derive(Clone, Debug, Serialize, Deserialize, Validate, Default)]
@@ -79,19 +81,22 @@ impl VakthundConfig {
     /// If validation fails on loaded configuration.
     pub fn load() -> Result<Self, ConfigError> {
         // Start with defaults.
-        let mut figment = Figment::from(Serialized::defaults(VakthundConfig::default()));
+        let figment = Figment::from(Serialized::defaults(VakthundConfig::default()));
 
-        if Path::new("config/vakthund.yaml").exists() {
-            figment = figment.merge(Yaml::file("config/vakthund.yaml"));
+        let figment = if Path::new("config/vakthund.yaml").exists() {
+            figment.merge(Yaml::file("config/vakthund.yaml"))
         } else {
             println!("config/vakthund.yaml not found, using default configuration");
-        }
+            figment
+        };
 
         let env = std::env::var("VAKTHUND_ENV").unwrap_or_else(|_| "production".into());
         let env_file = format!("config/{}.yaml", env);
-        if Path::new(&env_file).exists() {
-            figment = figment.merge(Yaml::file(env_file));
-        }
+        let figment = if Path::new(&env_file).exists() {
+            figment.merge(Yaml::file(env_file))
+        } else {
+            figment
+        };
 
         figment
             .merge(Env::prefixed("VAKTHUND_").split("__"))
@@ -122,6 +127,18 @@ impl VakthundConfig {
                 Ok(config)
             })
     }
+
+    // New Function using ConfigProvider
+    pub fn load_with_provider(provider: &dyn ConfigProvider) -> Result<Self, ConfigError> {
+        provider
+            .load()
+            .map_err(ConfigError::from)
+            .and_then(|figment| figment.extract().map_err(ConfigError::from))
+            .and_then(|config: Self| {
+                config.validate()?;
+                Ok(config)
+            })
+    }
 }
 
 #[cfg(test)]
@@ -141,4 +158,6 @@ mod tests {
         let config = VakthundConfig::load().unwrap();
         assert_eq!(config.core.event_bus.capacity, 8192);
     }
+
+    // TODO add tests for config providers.
 }

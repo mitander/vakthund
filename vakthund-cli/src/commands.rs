@@ -1,7 +1,6 @@
-use std::path::PathBuf;
-
 use clap::{Args, Parser, Subcommand};
-
+use std::path::PathBuf;
+use vakthund_engine::engine::default_driver::DefaultSimulationDriver;
 use vakthund_telemetry::logging::EventLogger;
 
 #[derive(Parser)]
@@ -26,7 +25,6 @@ pub struct RunArgs {
     /// Network interface to monitor
     #[arg(short, long)]
     pub interface: String,
-
     /// Validate config before running
     #[arg(long, default_value_t = true)]
     pub validate: bool,
@@ -61,11 +59,24 @@ pub struct FuzzArgs {
 
 pub async fn run_command(cli: Cli) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     EventLogger::init();
-
     match cli.command {
         Commands::Run(run_args) => {
             let config = vakthund_config::VakthundConfig::load()?;
-            let runtime = std::sync::Arc::new(vakthund_engine::SimulationRuntime::new(config));
+
+            // Create a dummy simulator that won't be used in production mode
+            let simulator = vakthund_simulator::Simulator::new(
+                0,     // seed
+                false, // chaos
+                0,     // latency
+                0,     // jitter
+                None,  // no event bus yet
+            );
+
+            // Create a driver with dummy values since it won't be used in production mode
+            let driver = DefaultSimulationDriver::new(simulator, 0);
+
+            let runtime =
+                std::sync::Arc::new(vakthund_engine::SimulationRuntime::new(config, driver));
             runtime
                 .run_production(&run_args.interface)
                 .await
@@ -73,10 +84,6 @@ pub async fn run_command(cli: Cli) -> Result<(), Box<dyn std::error::Error + Sen
         }
         Commands::Simulate(sim_args) => {
             let config = vakthund_config::VakthundConfig::load()?;
-            let runtime_config = config.clone();
-
-            let runtime =
-                std::sync::Arc::new(vakthund_engine::SimulationRuntime::new(runtime_config));
 
             // Use original config for simulator parameters
             let simulator = vakthund_simulator::Simulator::new(
@@ -84,15 +91,41 @@ pub async fn run_command(cli: Cli) -> Result<(), Box<dyn std::error::Error + Sen
                 false,
                 config.monitor.thresholds.packet_rate as u64,
                 config.monitor.thresholds.connection_rate as u64,
-                Some(runtime.event_bus.clone()),
+                None, // We'll set this after runtime creation
             );
 
-            runtime.run_simulator(simulator, sim_args.events).await?;
+            // Create the driver with the simulator
+            let driver = DefaultSimulationDriver::new(simulator, sim_args.events);
+
+            // Create the runtime with the driver
+            let runtime = std::sync::Arc::new(vakthund_engine::SimulationRuntime::new(
+                config.clone(),
+                driver,
+            ));
+
+            // Run the simulation
+            let result = runtime.run_simulation(sim_args.events).await?;
+
+            println!("Simulation completed with hash: {}", result);
             Ok(())
         }
         Commands::Fuzz(fuzz_args) => {
             let config = vakthund_config::VakthundConfig::load()?;
-            let runtime = vakthund_engine::SimulationRuntime::new(config);
+
+            // Create a dummy simulator for the driver
+            let simulator = vakthund_simulator::Simulator::new(
+                fuzz_args.seed,
+                false,
+                0,    // Doesn't matter for fuzz testing
+                0,    // Doesn't matter for fuzz testing
+                None, // We'll set this after runtime creation
+            );
+
+            // Create a driver with the simulator
+            let driver = DefaultSimulationDriver::new(simulator, 0); // Events don't matter for fuzz mode
+
+            // Create and wrap the runtime
+            let runtime = vakthund_engine::SimulationRuntime::new(config, driver);
             let runtime_arc = std::sync::Arc::new(runtime);
 
             runtime_arc

@@ -21,9 +21,13 @@
 //! - Hardware timestamping support
 
 pub mod alloc;
+pub mod error;
 pub mod events;
 
 pub mod prelude {
     pub use crate::alloc::*;
+    pub use crate::error::*;
     pub use crate::events::*;
 }
+
+pub use error::SimulationError;

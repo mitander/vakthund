@@ -10,10 +10,10 @@ opentelemetry = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_yaml = { workspace = true }
 parking_lot = { workspace = true }
-thiserror = { workspace = true }
 blake3 = { workspace = true }
 hex = { workspace = true }
 anyhow = { workspace = true }
+async-trait = "0.1"
 
 vakthund-core = { path = "../vakthund-core" }
 vakthund-simulator = { path = "../vakthund-simulator" }

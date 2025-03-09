@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 /// A simple virtual clock that advances in nanoseconds.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct VirtualClock {
     // A shared atomic counter representing the current simulation time in nanoseconds.
     offset: Arc<AtomicU64>,

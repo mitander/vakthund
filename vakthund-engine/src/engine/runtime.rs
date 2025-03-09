@@ -5,41 +5,45 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use opentelemetry::KeyValue;
 use parking_lot::Mutex;
-use tokio::task::JoinHandle;
+use tokio::task::{spawn_blocking, JoinHandle};
 use tokio::time::sleep;
 use tracing::{debug, error, info, instrument, trace, warn};
 
 use vakthund_config::{SimulatorConfig, VakthundConfig};
 use vakthund_core::events::{bus::EventBus, network::NetworkEvent};
+use vakthund_core::SimulationError;
+
 use vakthund_detection::signatures::SignatureEngine;
 use vakthund_prevention::firewall::Firewall;
 use vakthund_protocols::{AnyParser, CoapParser, ModbusParser, MqttParser};
 use vakthund_simulator::{Scenario, Simulator};
 use vakthund_telemetry::{logging::EventLogger, MetricsRecorder};
 
-use crate::engine::{diagnostics::DiagnosticsCollector, error::SimulationError};
+use crate::engine::diagnostics::DiagnosticsCollector;
+use crate::engine::event_processing::EventProcessor;
+use crate::engine::runtime_trait::SimulationDriver;
 
 /// Coordinates system operations in Vakthund, including event processing, simulation,
 /// fuzz testing, and scenario-based execution.
-pub struct SimulationRuntime {
+pub struct SimulationRuntime<T: SimulationDriver + Send + Sync + 'static> {
     /// System configuration parameters
     config: Arc<VakthundConfig>,
     /// Event bus for cross-component communication (SPSC)
     pub event_bus: Arc<EventBus>,
-    /// Current simulation state (if running)
-    simulator: Mutex<Option<Simulator>>,
     /// Metrics collection subsystem
-    metrics: MetricsRecorder,
+    pub metrics: Arc<MetricsRecorder>,
     /// Diagnostic data collector
     diagnostics: Mutex<DiagnosticsCollector>,
+    event_processor: Arc<dyn EventProcessor + Send + Sync>,
+    driver: Arc<Mutex<T>>,
 }
 
-impl SimulationRuntime {
+impl<T: SimulationDriver + Send + Sync + 'static> SimulationRuntime<T> {
     /// Creates a new simulation runtime with loaded configuration.
     ///
     /// # Panics
     /// If event bus creation fails due to invalid capacity
-    pub fn new(config: VakthundConfig) -> Self {
+    pub fn new(config: VakthundConfig, driver: T) -> Self {
         info!("Initializing simulation runtime");
         debug!("Core config: {:?}", config.core);
 
@@ -48,15 +52,21 @@ impl SimulationRuntime {
                 .expect("Failed to create event bus"),
         );
 
+        // Create shared metrics
+        let metrics = Arc::new(MetricsRecorder::new());
+
+        // Construct the default event processor with shared metrics
+        let default_event_processor = DefaultEventProcessor::new(metrics.clone());
+
         Self {
             config: Arc::new(config),
             event_bus,
-            simulator: Mutex::new(None),
-            metrics: MetricsRecorder::new(),
+            metrics,
             diagnostics: Mutex::new(DiagnosticsCollector::new()),
+            event_processor: Arc::new(default_event_processor),
+            driver: Arc::new(Mutex::new(driver)),
         }
     }
-
     /// Runs in "production mode," capturing live packets from a specified network interface.
     /// Then it sends them to the event bus and processes them in a background task.
     ///
@@ -78,7 +88,7 @@ impl SimulationRuntime {
         });
 
         // Start capture loop on a blocking thread
-        let capture_task = tokio::task::spawn_blocking({
+        let capture_task = spawn_blocking({
             let interface = interface.to_string();
             let event_bus = event_bus.clone();
             let config = self.config.capture.clone();
@@ -119,17 +129,14 @@ impl SimulationRuntime {
 
         // Handle processor task completion
         let _ = processor_result
+            .map_err(|e| SimulationError::Processing(e.to_string()))
             .map_err(|e| {
                 error!("Processor task panicked: {e}");
                 SimulationError::Processing(format!("Processor panic: {e}"))
-            })?
-            .map_err(|e| {
-                error!("Event processing failed: {e}");
-                e
             })?;
 
         // Handle capture task completion
-        capture_result.map_err(|e| {
+        let _ = capture_result.map_err(|e| {
             error!("Capture task failed: {e}");
             SimulationError::Processing(format!("Capture failure: {e}"))
         })?;
@@ -139,15 +146,13 @@ impl SimulationRuntime {
     }
 
     /// Spawns a dedicated event processor task that continuously calls `recv()`
-    /// on the EventBus. Each event is immediately processed in `process_network_event`.
+    /// on the EventBus. This can have multiple implementations based on use cases.
     ///
     /// This loop runs forever unless externally cancelled or aborted.
     #[instrument(skip(self))]
     fn spawn_event_processor(&self) -> JoinHandle<Result<(), SimulationError>> {
-        debug!("Initializing event processor");
         let event_bus = self.event_bus.clone();
-        let metrics = self.metrics.clone();
-        let signature_engine = SignatureEngine::new();
+        let event_processor = self.event_processor.clone(); // Clone the trait object
 
         tokio::spawn(async move {
             info!("Event processor started");
@@ -159,8 +164,8 @@ impl SimulationRuntime {
                         processed_events += 1;
                         trace!("Processing event #{}", processed_events);
 
-                        // Actual protocol/detection pipeline
-                        process_network_event(&event, &signature_engine, &metrics).await;
+                        // Call Event Processor using Trait
+                        event_processor.process(&event).await?;
                     }
                     None => {
                         // Queue empty, avoid busy-spin
@@ -172,73 +177,30 @@ impl SimulationRuntime {
         })
     }
 
-    /// Runs a scenario-based simulation, pushing events onto the bus,
-    /// processed by the same background event processor.
-    ///
-    /// # Arguments
-    /// * `scenario` - Predefined scenario with known events
-    #[instrument(skip(self, scenario))]
-    pub async fn run_scenario(self: Arc<Self>, scenario: Scenario) -> Result<(), SimulationError> {
-        info!("Starting scenario execution");
-        debug!("Scenario details: {} events", scenario.events.len());
+    /// Runs the simulation by using the concrete driver implementation
+    #[instrument(skip(self))]
+    pub async fn run_simulation(&self, event_count: usize) -> Result<String, SimulationError> {
+        debug!("Starting simulation with {} events", event_count);
 
-        let processor_self = self.clone();
-        let processor = tokio::spawn(async move { processor_self.spawn_event_processor().await });
-
-        // Publish scenario events by running the simulator
-        let self_clone = self.clone();
-        let simulator_task = tokio::spawn({
-            let scenario = scenario.clone();
-            async move {
-                self_clone
-                    .run_simulator(Simulator::from_scenario(&scenario), scenario.events.len())
-                    .await
-            }
-        });
-
-        let (processor_result, simulator_result) = tokio::join!(processor, simulator_task);
-
-        // Convert JoinError to SimulationError
-        let _processor_result =
-            processor_result.map_err(|e| SimulationError::Processing(e.to_string()))??;
-
-        let actual_hash =
-            simulator_result.map_err(|e| SimulationError::Processing(e.to_string()))??;
-
-        self.validate_scenario_hash(&scenario, &actual_hash)?;
-        info!("Scenario execution completed");
-        Ok(())
-    }
-
-    /// Manages simulator execution. Each simulated event is sent to the bus (or dropped).
-    ///
-    /// # Arguments
-    /// * `simulator` - Simulator instance with the scenario or fuzz config
-    /// * `event_count` - Number of events to generate
-    #[instrument(skip(self, simulator))]
-    pub async fn run_simulator(
-        &self,
-        simulator: Simulator,
-        event_count: usize,
-    ) -> Result<String, SimulationError> {
-        debug!("Initializing simulator with {event_count} events");
-        *self.simulator.lock() = Some(simulator);
-
-        let event_bus = self.event_bus.clone();
-        let mut simulator_guard = self.simulator.lock();
-        let simulator = simulator_guard.as_mut().expect("Simulator was just set");
-
-        for event_id in 0..event_count {
-            trace!("Generating event {event_id}");
-            if let Some(event) = simulator.simulate_event(event_id) {
-                debug!("Dispatching simulated event");
-                if let Err(e) = event_bus.send(event) {
-                    warn!("Failed to send simulated event: {e}");
+        let final_hash = String::new();
+        for _i in 0..event_count {
+            match self.driver.lock().next_event().await {
+                Ok(Some(event)) => match self.process_event(&event).await {
+                    Ok(_) => {}
+                    Err(e) => return Err(e),
+                },
+                Ok(None) => {
+                    break;
                 }
+                Err(e) => return Err(e),
             }
         }
+        Ok(final_hash)
+    }
 
-        Ok(simulator.finalize_hash())
+    async fn process_event(&self, event: &NetworkEvent) -> Result<(), SimulationError> {
+        let event_processor = self.event_processor.clone();
+        event_processor.process(event).await
     }
 
     /// Validates scenario execution hash against the expected result in the scenario.
@@ -389,69 +351,83 @@ impl SimulationRuntime {
     }
 }
 
-/// Processes a single network event through the detection pipeline.
-#[instrument(skip_all, level = "debug")]
-async fn process_network_event(
-    event: &NetworkEvent,
-    signature_engine: &SignatureEngine,
-    metrics: &MetricsRecorder,
-) {
-    // The function name & arguments are at debug level.
-    // That means “enter” logs only show if RUST_LOG=debug or lower.
-    debug!("Processing network event ({} bytes)", event.payload.len());
+/// Default Implementation of EventProcessor
+struct DefaultEventProcessor {
+    signature_engine: SignatureEngine,
+    metrics: Arc<MetricsRecorder>,
+}
 
-    let parsers = [
-        AnyParser::Mqtt(MqttParser::new()),
-        AnyParser::Coap(CoapParser::new()),
-        AnyParser::Modbus(ModbusParser::new()),
-    ];
+impl DefaultEventProcessor {
+    fn new(metrics: Arc<MetricsRecorder>) -> Self {
+        Self {
+            signature_engine: SignatureEngine::new(),
+            metrics,
+        }
+    }
+}
 
-    for parser in &parsers {
-        match parser {
-            AnyParser::Mqtt(p) => {
-                trace!("Attempting MQTT parsing");
-                if let Ok(packet) = p.parse(&event.payload) {
-                    debug!("MQTT packet parsed");
-                    let start_time = std::time::Instant::now();
-                    let matches = signature_engine.buffer_scan(packet.payload());
+#[async_trait::async_trait]
+impl EventProcessor for DefaultEventProcessor {
+    #[instrument(skip_all, level = "debug")]
+    async fn process(&self, event: &NetworkEvent) -> Result<(), SimulationError> {
+        // The function name & arguments are at debug level.
+        // That means “enter” logs only show if RUST_LOG=debug or lower.
+        debug!("Processing network event ({} bytes)", event.payload.len());
 
-                    metrics
-                        .detection_latency
-                        .observe(start_time.elapsed().as_nanos() as f64);
-                    handle_detection_results(matches, "MQTT").await;
-                    return;
+        let parsers = [
+            AnyParser::Mqtt(MqttParser::new()),
+            AnyParser::Coap(CoapParser::new()),
+            AnyParser::Modbus(ModbusParser::new()),
+        ];
+
+        for parser in &parsers {
+            match parser {
+                AnyParser::Mqtt(p) => {
+                    trace!("Attempting MQTT parsing");
+                    if let Ok(packet) = p.parse(&event.payload) {
+                        debug!("MQTT packet parsed");
+                        let start_time = SystemTime::now();
+                        let matches = self.signature_engine.buffer_scan(packet.payload());
+
+                        self.metrics
+                            .detection_latency
+                            .observe(start_time.elapsed().unwrap().as_nanos() as f64);
+                        handle_detection_results(matches, "MQTT").await;
+                        return Ok(());
+                    }
                 }
-            }
-            AnyParser::Coap(p) => {
-                trace!("Attempting CoAP parsing");
-                if let Ok(packet) = p.parse(&event.payload) {
-                    debug!("CoAP packet parsed");
-                    let start_time = std::time::Instant::now();
-                    let matches = signature_engine.buffer_scan(packet.payload());
-                    metrics
-                        .detection_latency
-                        .observe(start_time.elapsed().as_nanos() as f64);
-                    handle_detection_results(matches, "CoAP").await;
-                    return;
+                AnyParser::Coap(p) => {
+                    trace!("Attempting CoAP parsing");
+                    if let Ok(packet) = p.parse(&event.payload) {
+                        debug!("CoAP packet parsed");
+                        let start_time = SystemTime::now();
+                        let matches = self.signature_engine.buffer_scan(packet.payload());
+                        self.metrics
+                            .detection_latency
+                            .observe(start_time.elapsed().unwrap().as_nanos() as f64);
+                        handle_detection_results(matches, "CoAP").await;
+                        return Ok(());
+                    }
                 }
-            }
-            AnyParser::Modbus(p) => {
-                trace!("Attempting Modbus parsing");
-                if let Ok(packet) = p.parse(&event.payload) {
-                    debug!("Modbus packet parsed");
-                    let start_time = std::time::Instant::now();
-                    let matches = signature_engine.buffer_scan(packet.payload());
-                    metrics
-                        .detection_latency
-                        .observe(start_time.elapsed().as_nanos() as f64);
-                    handle_detection_results(matches, "Modbus").await;
-                    return;
+                AnyParser::Modbus(p) => {
+                    trace!("Attempting Modbus parsing");
+                    if let Ok(packet) = p.parse(&event.payload) {
+                        debug!("Modbus packet parsed");
+                        let start_time = SystemTime::now();
+                        let matches = self.signature_engine.buffer_scan(packet.payload());
+                        self.metrics
+                            .detection_latency
+                            .observe(start_time.elapsed().unwrap().as_nanos() as f64);
+                        handle_detection_results(matches, "Modbus").await;
+                        return Ok(());
+                    }
                 }
             }
         }
-    }
 
-    warn!("No compatible protocol parser found");
+        warn!("No compatible protocol parser found");
+        Ok(())
+    }
 }
 
 /// Handles detection results (e.g., malicious signatures) and triggers prevention actions.

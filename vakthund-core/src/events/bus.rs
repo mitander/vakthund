@@ -25,6 +25,7 @@ pub enum EventError {
 
 /// Cache-line aligned atomic counter to prevent false sharing
 #[repr(align(64))]
+#[derive(Debug)]
 struct AlignedCounter(AtomicU64);
 
 impl AlignedCounter {
@@ -34,6 +35,7 @@ impl AlignedCounter {
     }
 }
 
+#[derive(Debug)]
 struct InnerBus {
     buffer: Box<[std::cell::UnsafeCell<Option<NetworkEvent>>]>,
     head: AlignedCounter,
@@ -42,6 +44,7 @@ struct InnerBus {
 }
 
 /// Thread-safe event bus for high-frequency messaging
+#[derive(Debug)]
 pub struct EventBus {
     inner: Arc<InnerBus>,
 }

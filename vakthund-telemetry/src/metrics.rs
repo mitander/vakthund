@@ -17,7 +17,7 @@
 
 use prometheus::{Counter, Histogram, HistogramOpts, Registry};
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct MetricsRecorder {
     pub registry: prometheus::Registry,
     pub processed_events: prometheus::Counter,
