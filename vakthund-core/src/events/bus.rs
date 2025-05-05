@@ -9,7 +9,8 @@
 //! - Backpressure signaling
 
 use super::network::NetworkEvent;
-use std::sync::atomic::{AtomicU64, Ordering};
+use once_cell::sync::Lazy;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::error;
@@ -90,6 +91,11 @@ impl EventBus {
     /// Uses unsafe code for interior mutability guarded by atomic counters.
     #[inline]
     pub fn send(&self, event: NetworkEvent) -> Result<(), EventError> {
+        // Check if bus is closed
+        if Self::closed().load(Ordering::Acquire) {
+            return Err(EventError::QueueFull);
+        }
+
         let head = self.inner.head.0.load(Ordering::Relaxed);
         let tail = self.inner.tail.0.load(Ordering::Acquire);
 
@@ -99,8 +105,8 @@ impl EventBus {
 
         // SAFETY: Exclusive write access ensured by atomic counters
         unsafe {
-            let idx = (head as usize) & self.inner.mask;
-            *self.inner.buffer[idx].get() = Some(event)
+            let index = head & self.inner.mask as u64;
+            *self.inner.buffer[index as usize].get() = Some(event);
         }
 
         self.inner.head.0.store(head + 1, Ordering::Release);
@@ -144,6 +150,54 @@ impl EventBus {
 
         self.inner.tail.0.store(tail + 1, Ordering::Release);
         event
+    }
+
+    /// Closes the event bus, preventing new events from being sent.
+    pub fn close(&self) {
+        Self::closed().store(true, Ordering::Release);
+    }
+
+    /// Verifies that all events have been processed.
+    pub fn verify_completion(&self) -> Result<(), EventError> {
+        // Check if bus is closed
+        if Self::closed().load(Ordering::Acquire) {
+            return Err(EventError::QueueFull);
+        }
+
+        // Get current head and tail
+        let head = self.inner.head.0.load(Ordering::Acquire);
+        let tail = self.inner.tail.0.load(Ordering::Acquire);
+
+        // Calculate number of unprocessed events
+        let unprocessed = head.wrapping_sub(tail);
+        if unprocessed > 0 {
+            error!(
+                "Event bus verification failed: {} unprocessed events",
+                unprocessed
+            );
+            return Err(EventError::QueueFull);
+        }
+
+        // Verify all slots are empty
+        for i in 0..self.inner.buffer.len() {
+            unsafe {
+                if let Some(_) = *self.inner.buffer[i].get() {
+                    error!(
+                        "Event bus verification failed: Slot {} still contains event",
+                        i
+                    );
+                    return Err(EventError::QueueFull);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    // Thread-safe singleton for closed state
+    fn closed() -> &'static AtomicBool {
+        static CLOSED: Lazy<AtomicBool> = Lazy::new(|| AtomicBool::new(false));
+        &CLOSED
     }
 }
 

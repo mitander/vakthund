@@ -313,25 +313,54 @@ impl<T: SimulationDriver + Send + Sync + 'static> SimulationRuntime<T> {
                 Some(self.event_bus.clone()),
             );
 
-            // Generate & push events
+            // Generate & push events with proper validation
             let mut generated = 0usize;
+            let mut failed = 0usize;
+            let mut event_queue = Vec::with_capacity(sim_config.event_count);
+
             for event_id in 0..sim_config.event_count {
                 if let Some(event) = simulator.simulate_event(event_id) {
                     generated += 1;
-                    if let Err(e) = self.event_bus.send(event) {
+                    event_queue.push(event);
+                }
+            }
+
+            // Batch send events and track failures
+            for event in event_queue {
+                match self.event_bus.send(event) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        failed += 1;
                         warn!("Failed to queue fuzzed event: {e}");
                     }
                 }
             }
 
-            debug!("Generated {generated} events this iteration");
+            // Log detailed event generation statistics
+            debug!(
+                "Event generation statistics:\n\
+                 - Total events: {}/{}\n\
+                 - Successfully queued: {}\n\
+                 - Failed to queue: {}",
+                generated,
+                sim_config.event_count,
+                generated - failed,
+                failed
+            );
 
-            // Sleep to prevent spamming
-            sleep(Duration::from_secs(1)).await;
+            // Calculate appropriate sleep duration based on event count
+            let sleep_duration =
+                Duration::from_millis((sim_config.event_count as f64 * 10.0).min(1000.0) as u64);
+            sleep(sleep_duration).await;
 
             info!(
-                "Completed fuzz iteration {} with seed {current_seed}",
-                current_iteration + 1
+                "Completed fuzz iteration {} with seed {current_seed}\n\
+                 - Events: {}/{}\n\
+                 - Sleep duration: {}ms",
+                current_iteration + 1,
+                generated - failed,
+                sim_config.event_count,
+                sleep_duration.as_millis()
             );
 
             // Optional iteration progress log
@@ -342,11 +371,22 @@ impl<T: SimulationDriver + Send + Sync + 'static> SimulationRuntime<T> {
             current_iteration += 1;
         }
 
-        // We can keep the processor running if we want, or abort it after fuzz ends.
-        // Here, we abort once we've finished all iterations:
-        processor_handle.abort();
+        // Signal the processor to stop and wait for it to complete
+        info!("Waiting for event processor to complete...");
+        self.event_bus.close();
 
-        info!("Fuzz testing complete");
+        // Wait for the processor to finish
+        let _ = processor_handle.await;
+
+        // Verify all events were processed
+        if let Err(e) = self.event_bus.verify_completion() {
+            warn!("Event bus verification failed: {e}");
+        }
+
+        info!(
+            "Fuzz testing complete. Processed {} iterations",
+            current_iteration
+        );
         Ok(())
     }
 }

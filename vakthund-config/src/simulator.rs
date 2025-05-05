@@ -68,15 +68,26 @@ impl SimulatorConfig {
 
     pub fn generate_fuzz_config(seed: u64, max_events: usize) -> SimulatorConfig {
         let mut rng = StdRng::seed_from_u64(seed);
+
+        // Generate more varied and realistic configurations
+        let event_count = rng.random_range(100..std::cmp::max(1000, max_events));
+        let fault_probability = rng.random_range(0.0..0.5); // Increased range for better coverage
+        let latency_ms = rng.random_range(0..1000); // Increased range for more realistic scenarios
+        let mut jitter_ms = rng.random_range(0..200); // Increased range for more realistic scenarios
+
+        // Validate generated values
+        if latency_ms > 500 && jitter_ms > 100 {
+            // Reduce jitter if latency is high to avoid unrealistic scenarios
+            jitter_ms = rng.random_range(0..100);
+        }
+
         SimulatorConfig {
             seed,
-            event_count: rng.random_range(100..=max_events),
-            chaos: ChaosConfig {
-                fault_probability: rng.random_range(0.0..0.2),
-            },
+            event_count,
+            chaos: ChaosConfig { fault_probability },
             network: NetworkModelConfig {
-                latency_ms: rng.random_range(0..500),
-                jitter_ms: rng.random_range(0..100),
+                latency_ms,
+                jitter_ms,
             },
         }
     }

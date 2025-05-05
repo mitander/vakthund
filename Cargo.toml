@@ -1,19 +1,20 @@
 [workspace]
 resolver = "2"
 members = [
+    "vakthund-cli",
     "vakthund-core",
+    "vakthund-capture",
+    "vakthund-config",
     "vakthund-detection",
     "vakthund-prevention",
     "vakthund-protocols",
-    "vakthund-telemetry",
     "vakthund-simulator",
-    "vakthund-cli",
-    "vakthund-capture",
-    "vakthund-config",
+    "vakthund-telemetry",
     "vakthund-engine",
 ]
 
 [workspace.dependencies]
+once_cell = "1.18"
 cargo-husky = { version = "1", default-features = false, features = ["user-hooks"] }
 # Base
 anyhow = "1.0.95"
