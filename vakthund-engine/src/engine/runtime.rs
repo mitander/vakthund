@@ -243,32 +243,40 @@ impl<T: SimulationDriver + Send + Sync + 'static> SimulationRuntime<T> {
         iterations: usize,
         max_events: usize,
     ) -> Result<(), SimulationError> {
-        info!("Starting fuzz testing");
-
-        // Log relevant config details
-        let iterations_str = if iterations == 0 {
-            "infinite".to_string()
-        } else {
-            iterations.to_string()
+        // Configure logging levels based on iteration count
+        let log_level = match iterations {
+            0 => "info",       // Infinite mode: less verbose
+            1..=10 => "debug", // Few iterations: more detailed
+            _ => "info",       // Many iterations: less verbose
         };
 
-        debug!(
-            "Fuzz configuration:\n\
-             - Base seed: {seed}\n\
-             - Iterations: {iterations_str}\n\
-             - Max events/iteration: {max_events}\n\
-             - Chaos enabled: {}\n\
-             - Packet rate: {}/s\n\
-             - Latency: {}ms\n\
-             - Jitter: {}ms",
-            true, // or use self.config.* if you have a chaos-enabled setting
-            self.config.monitor.thresholds.packet_rate,
-            self.config.monitor.thresholds.data_volume,
-            self.config.monitor.thresholds.connection_rate
-        );
-
-        if iterations == 0 {
-            warn!("Infinite fuzz mode activated (Ctrl-C to exit)");
+        // Log configuration based on log level
+        if log_level == "debug" {
+            info!("Starting fuzz testing (debug mode)");
+            debug!(
+                "Fuzz configuration:\n\
+- Base seed: {}\n\
+- Iterations: {}{}\n\
+- Max events/iteration: {}\n\
+- Chaos enabled: {}\n\
+- Packet rate: {}/s\n\
+- Latency: {}ms\n\
+- Jitter: {}ms",
+                seed,
+                iterations,
+                if iterations == 0 { " (infinite)" } else { "" },
+                max_events,
+                true, // or use self.config.* if you have a chaos-enabled setting
+                self.config.monitor.thresholds.packet_rate,
+                self.config.monitor.thresholds.packet_rate,
+                self.config.monitor.thresholds.data_volume
+            );
+        } else {
+            info!("Starting fuzz testing");
+            info!(
+                "Fuzz configuration: {} iterations with {} events each",
+                iterations, max_events
+            );
         }
 
         // Spawn the event processor to drain the bus in the background
@@ -287,24 +295,33 @@ impl<T: SimulationDriver + Send + Sync + 'static> SimulationRuntime<T> {
             let current_seed = seed + current_iteration as u64;
             let sim_config = SimulatorConfig::generate_fuzz_config(current_seed, max_events);
 
-            info!(
-                "Starting fuzz iteration {} with seed {current_seed}",
-                current_iteration + 1
-            );
+            // Log iteration start based on log level
+            if log_level == "debug" {
+                debug!(
+                    "Starting fuzz iteration {} with seed {current_seed}",
+                    current_iteration + 1
+                );
+                debug!(
+                    "Simulator configuration:
+- Chaos probability: {:.2}%
+- Base latency: {}ms
+- Max jitter: {}ms
+- Simulated events: {}",
+                    sim_config.chaos.fault_probability * 100.0,
+                    sim_config.network.latency_ms,
+                    sim_config.network.jitter_ms,
+                    sim_config.event_count,
+                );
+            } else {
+                info!("Starting iteration {}", current_iteration + 1);
+            }
 
-            // Log more details about the fuzz config
-            debug!(
-                "Simulator configuration:\n\
-                 - Chaos probability: {:.2}%\n\
-                 - Base latency: {}ms\n\
-                 - Max jitter: {}ms\n\
-                 - Simulated events: {}",
-                sim_config.chaos.fault_probability * 100.0,
-                sim_config.network.latency_ms,
-                sim_config.network.jitter_ms,
-                sim_config.event_count,
-            );
+            // Generate & push events with proper validation
+            let mut generated = 0usize;
+            let mut failed = 0usize;
+            let mut event_queue = Vec::with_capacity(sim_config.event_count);
 
+            // Create simulator with mutable reference
             let mut simulator = Simulator::new(
                 current_seed,
                 sim_config.chaos.fault_probability > 0.0,
@@ -313,11 +330,7 @@ impl<T: SimulationDriver + Send + Sync + 'static> SimulationRuntime<T> {
                 Some(self.event_bus.clone()),
             );
 
-            // Generate & push events with proper validation
-            let mut generated = 0usize;
-            let mut failed = 0usize;
-            let mut event_queue = Vec::with_capacity(sim_config.event_count);
-
+            // Generate events using the simulator
             for event_id in 0..sim_config.event_count {
                 if let Some(event) = simulator.simulate_event(event_id) {
                     generated += 1;
@@ -326,48 +339,67 @@ impl<T: SimulationDriver + Send + Sync + 'static> SimulationRuntime<T> {
             }
 
             // Batch send events and track failures
+            let mut event_count = 0;
             for event in event_queue {
                 match self.event_bus.send(event) {
-                    Ok(_) => {}
+                    Ok(_) => {
+                        event_count += 1;
+                        if log_level == "debug" {
+                            debug!("Queued event {}/{}", event_count, generated);
+                        }
+                    }
                     Err(e) => {
                         failed += 1;
-                        warn!("Failed to queue fuzzed event: {e}");
+                        if log_level == "debug" {
+                            warn!("Failed to queue fuzzed event: {e}");
+                        }
                     }
                 }
             }
 
-            // Log detailed event generation statistics
-            debug!(
-                "Event generation statistics:\n\
-                 - Total events: {}/{}\n\
-                 - Successfully queued: {}\n\
-                 - Failed to queue: {}",
-                generated,
-                sim_config.event_count,
-                generated - failed,
-                failed
-            );
+            // Log statistics based on log level
+            if log_level == "debug" {
+                debug!(
+                    "Event generation statistics:
+- Total events: {}/{}
+- Successfully queued: {}
+- Failed to queue: {}",
+                    generated,
+                    sim_config.event_count,
+                    generated - failed,
+                    failed
+                );
+            } else {
+                info!(
+                    "Generated {} events ({} failed)",
+                    generated - failed,
+                    failed
+                );
+            }
 
             // Calculate appropriate sleep duration based on event count
             let sleep_duration =
                 Duration::from_millis((sim_config.event_count as f64 * 10.0).min(1000.0) as u64);
             sleep(sleep_duration).await;
 
-            info!(
-                "Completed fuzz iteration {} with seed {current_seed}\n\
-                 - Events: {}/{}\n\
-                 - Sleep duration: {}ms",
-                current_iteration + 1,
-                generated - failed,
-                sim_config.event_count,
-                sleep_duration.as_millis()
-            );
-
-            // Optional iteration progress log
-            if iterations > 0 && (current_iteration + 1) % 10 == 0 {
-                info!("Progress: {}/{}", current_iteration + 1, iterations);
+            // Log iteration completion based on log level
+            if log_level == "debug" {
+                debug!(
+                    "Completed fuzz iteration {} with seed {current_seed}
+- Events: {}/{}
+- Sleep duration: {}ms",
+                    current_iteration + 1,
+                    generated - failed,
+                    sim_config.event_count,
+                    sleep_duration.as_millis()
+                );
+            } else {
+                info!(
+                    "Completed iteration {} ({} events)",
+                    current_iteration + 1,
+                    generated - failed
+                );
             }
-
             current_iteration += 1;
         }
 
